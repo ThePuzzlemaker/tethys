@@ -1,0 +1,278 @@
+\documentclass[11pt]{article}
+\usepackage[ligature,reserved]{semantic}
+\usepackage[utf8x]{inputenc}
+\usepackage[english]{babel}
+\usepackage{hyperref}
+\usepackage{hyphenat}
+\usepackage{amsfonts}
+\usepackage{amsmath} \allowdisplaybreaks
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage[margin=1.25in,letterpaper]{geometry}
+\usepackage{mathtools}
+\usepackage{mathpartir}
+\usepackage{scalerel}
+\usepackage{stackengine}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+    pdfpagemode=FullScreen,
+}
+
+
+% thanks goes to einargs for creating this setup (BNF, \typerule, \typeaxiom)
+% (rest is my hacky LaTeX)
+% Syntax group
+\newcommand{\syng}[2]{#1 \bnf& & \text{#2} \\}
+% Line in a syntax group
+\newcommand{\syn}[2]{& #1 & \text{#2} \\}
+\newcommand{\bnf}{\mathrel{::=}\;}
+
+\newcommand{\tchk}{\Leftarrow}
+\newcommand{\tsyn}{\Rightarrow}
+\newcommand{\rarr}{\rightarrow}
+
+% found on tex.SE, tortured into compliance
+\newlength\arrowheight
+\newcommand\doubleRightarrow{
+  \mathrel{\ThisStyle{
+    \setlength{\arrowheight}{\heightof{$\SavedStyle\Downarrow$}}
+    \scalerel*{\rotatebox{90}{\stackengine{.5\arrowheight}{$\SavedStyle\Downarrow$}
+      {$\SavedStyle\Downarrow$}{O}{c}{F}{F}{L}}}{\rotatebox[origin=c]{90}{$\Downarrow$}}}
+}}
+
+% function & applicand type notation
+% stolen from Dunfield 2013
+\newcommand{\tapp}[3]{
+    #1 \bullet #2 \doubleRightarrow #3
+}
+
+\newcommand{\typerule}[3]{
+    \inferrule{#2}{#3}\quad(\textsc{#1})
+}
+
+\newcommand{\typeaxiom}[2]{
+    \inferrule{ }{#2}\quad(\textsc{#1})
+}
+
+\reservestyle{\literal}{\texttt}
+\reservestyle{\keyword}{\textbf}
+\literal{true, false, bool, int, cond, fix, mod, and, or, not, unfold, fold}
+\keyword{case, of, as}
+
+\title{Tethys\\
+    \large A Toy Functional Programming Language\\
+    with a System F$\omega$-based Core Calculus\\
+    \url{https://github.com/ThePuzzlemaker/tethys}}
+\author{The Puzzlemaker}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+This ``paper'' (which is really just a well-typeset, but somewhat informal write-up) introduces Tethys, a toy functional programming language based on a System F$\omega$-based core calculus. Hence the title.
+
+There are two parts of Tethys: the surface language, and the core calculus. The core calculus is the intermediate representation of Tethys which is used for type checking and inference, and for interpretation. The surface language is the higher-level interface that is eventually desugared by the compiler/interpreter to the core calculus.
+
+The reference implementation in Rust will not use any particular ``tricks'' in terms of interpretation, instead just using a simple tree-walk interpreter or similar.
+
+This language was created in order to conduct informal research (i.e., not actually discovering anything interesting, probably) on type systems, especially bidirectional typechecking and polymorphism. Tethys is named as such as it is the name of the co-orbital moon to Calypso; as my work on this language is ``co-orbital'', so to speak, to my work on Calypso.\footnote{More information on Calypso (the language, of course) is available at \url{https://calypso-lang.github.io}}
+
+\section{The Surface Language}
+
+This section has not been started yet.
+
+\section{The Core Calculus}
+
+This section is, unsurprisingly, work-in-progress.
+
+\subsection{Abstract Syntax}
+
+\begin{align*}
+\syng{\kappa}{kinds:}
+    \syn{*}{concrete types}
+    \syn{\kappa \rarr \kappa}{type constructors}
+\end{align*}
+\begin{align*}
+\syng{\sigma, \tau}{monotypes:}
+    \syn{\alpha}{type variables}
+    \syn{\<bool>}{booleans}
+    \syn{\<int>}{64-bit signed integer}
+    \syn{\{\overline{\tau_i}\}}{$n$-ary products}
+    \syn{\langle\overline{\tau_i}\rangle}{$n$-ary sums}
+    \syn{\sigma \rarr \tau}{arrows}
+    \syn{\mu \alpha . \tau}{recursive types}
+\end{align*}
+\begin{align*}
+\syng{A, B, C}{types:}
+    \syn{\sigma, \tau}{monotypes}
+    \syn{\forall(\alpha :: \kappa).A}{universal quantification}
+    \syn{\lambda(\alpha :: \kappa).A}{type-level lambdas (type constructor)}
+    \syn{A\;B}{type-level application}
+\end{align*}
+\begin{align*}
+\syng{t}{terms:}
+    \syn{x}{variables}
+    \syn{c}{constants}
+    \syn{e : A}{type annotation}
+    \syn{\{\overline{e_i}\}}{introduce product}
+    \syn{e.i}{product elimination (projection)}
+    \syn{\langle i = e \rangle\ \<as>\ A}{variant introduction (injection)}
+    \syn{\<case>\ e\ \<of>\ e}{variant elimination}
+    \syn{\lambda x . e}{lambda abstraction}
+    \syn{e\;e}{lambda application}
+    \syn{e [ \tau ]}{type application}
+    \syn{\<unfold>_{\mu \alpha . \tau} : \mu \alpha . \tau \rarr \tau [ \mu \alpha . \tau / \alpha ]}{isorecursive folding}
+    \syn{\<fold>_{\mu \alpha . \tau} : \tau [ \mu \alpha . \tau / \alpha ] \rarr \mu \alpha . \tau}{isorecursive unfolding}
+\end{align*}
+
+\begin{align*}
+\syng{c}{constants and builtins:}
+    \syn{\<fix> : \forall \alpha . (\alpha \rarr \alpha) \rarr \alpha}{fixpoint combinator}
+    \syn{\<true>, \<false>}{boolean literals}
+    \syn{\dotso, -2, -1, 0, 1, 2, \dotso}{integer literals}
+    \syn{+, -, *, /, \<mod> : \<int> \rarr \<int> \rarr \<int>}{arithmetic operators}
+    \syn{\<and>, \<or> : \<bool> \rarr \<bool> \rarr \<bool>}{binary boolean operators}
+    \syn{\<not> : \<bool> \rarr \<bool>}{negation}
+    \syn{\<cond> : \forall \alpha . \<bool> \rarr \alpha \rarr \alpha}{conditional}
+\end{align*}
+
+\begin{align*}
+\syng{\Gamma}{contexts:}
+    \syn{\emptyset}{empty context}
+    \syn{\Gamma, x : A}{variable binding}
+    \syn{\Gamma, \alpha :: \kappa}{type variable binding}
+    \syn{\Gamma, \hat{\alpha}}{existential type variable}
+    \syn{\Gamma, \hat{\alpha} = \tau}{solved existential type variable}
+\end{align*}
+
+\subsection{Kinding Rules}
+
+\begin{mathpar}
+\typeaxiom{K-Bool}{\<bool> :: *}
+
+\typeaxiom{K-Int}{\<int> :: *}
+
+\typerule{K-Sum}{\Gamma \vdash \tau_i :: *\ (\mathrm{for\ all}\ i)}{\Gamma \vdash \{\overline{\tau_i}\} :: *}
+
+\typerule{K-Sum}{\Gamma \vdash \tau_i :: *\ (\mathrm{for\ all}\ i)}{\Gamma \vdash \langle\overline{\tau_i}\rangle :: *}
+
+\typerule{K-Arr}{\Gamma \vdash \sigma :: * \\ \Gamma \vdash \tau :: *}{\Gamma \vdash \sigma \rarr \tau :: *}
+
+\typerule{K-Fix}{\Gamma, \alpha :: \kappa \vdash \tau :: \kappa}{\Gamma \vdash \mu \alpha . \tau :: \kappa}
+
+\typerule{K-Var}{\alpha :: \kappa \in \Gamma}{\Gamma \vdash \alpha :: \kappa}
+
+\typerule{K-All}{\Gamma, \alpha :: \kappa \vdash A :: *}{\Gamma \vdash \forall (\alpha :: \kappa) . A :: *}
+
+\typerule{K-Lam}{\Gamma, \alpha :: \kappa \vdash A :: \kappa'}{\Gamma \vdash \lambda (\alpha :: \kappa) . A :: \kappa \rarr \kappa'}
+
+\typerule{K-App}{\Gamma \vdash \tau_1 :: \kappa \rarr \kappa' \\ \Gamma \vdash \tau_2 :: \kappa'}{\Gamma \vdash \tau_1\;\tau_2 :: \kappa'}
+\end{mathpar}
+
+\subsection{Well-Formedness of Types, Kinds, and Contexts}
+
+\boxed{\Gamma \vdash A}
+Under context $\Gamma$, type $A$ is well-formed
+
+\begin{mathpar}
+\typeaxiom{WF-Bool}{\Gamma \vdash \<bool>}
+
+\typeaxiom{WF-Int}{\Gamma \vdash \<int>}
+
+\typerule{WF-Prod}{\Gamma \vdash \tau_i\ (\mathrm{for\ all}\ i)}{\Gamma \vdash \{\overline{\tau_i}\}}
+
+\typerule{WF-Sum}{\Gamma \vdash \tau_i\ (\mathrm{for\ all}\ i)}{\Gamma \vdash \langle\overline{\tau_i}\rangle}
+
+\typerule{WF-Arr}{
+    \Gamma \vdash A \\
+    \Gamma \vdash B}{
+    \Gamma \vdash A \rarr B
+}
+
+\typerule{WF-Fix}{\Gamma, \alpha \vdash \tau}{\Gamma \vdash \mu \alpha . \tau}
+
+\typeaxiom{WF-Uvar}{\Gamma, \alpha \vdash \alpha}
+
+\typeaxiom{WF-Evar}{\Gamma, \hat{\alpha} \vdash \hat{\alpha}}
+
+\typerule{WF-SolvedEvar}{\Gamma \vdash \tau}{\Gamma, \hat{\alpha} = \tau \vdash \hat{\alpha}}
+
+\typerule{WF-Forall}{\Gamma, \alpha :: \kappa \vdash A}{\Gamma \vdash \forall (\alpha :: \kappa) . A}
+
+\typerule{WF-Lambda}{\Gamma, \alpha :: \kappa \vdash A}{\Gamma \vdash \lambda (\alpha :: \kappa) . A}
+
+\typerule{WF-App}{
+    \Gamma \vdash A \\
+    \Gamma \vdash B}{
+    \Gamma \vdash A\;B
+}
+\end{mathpar}
+
+\boxed{\Gamma \vdash \kappa}
+Under context $\Gamma$, kind $\kappa$ is well-formed
+
+\begin{mathpar}
+\typeaxiom{KWF-Star}{\Gamma \vdash *}
+
+\typerule{KWF-Cons}{
+    \Gamma \vdash \kappa \\
+    \Gamma \vdash \kappa'}{
+    \Gamma \vdash \kappa \rarr \kappa'
+}
+
+\end{mathpar}
+
+\boxed{\Gamma\ ctx}
+Context $\Gamma$ is well-formed
+
+\begin{mathpar}
+\typeaxiom{Ctx-Empty}{\emptyset\ ctx}
+
+\typerule{Ctx-Var}{
+    \Gamma\ ctx \\
+    x \notin \mathrm{dom}(\Gamma) \\
+    \Gamma \vdash A
+    }{
+    \Gamma, x : A\ ctx
+}
+
+\typerule{Ctx-Uvar}{
+    \Gamma\ ctx \\
+    \alpha \notin \mathrm{dom}(\Gamma) \\
+    \Gamma \vdash \kappa}{
+    \Gamma, \alpha :: \kappa\ ctx
+}
+
+\typerule{Ctx-Evar}{
+    \Gamma\ ctx \\
+    \alpha \notin \mathrm{dom}(\Gamma)}{
+    \Gamma, \hat{\alpha}\ ctx
+}
+
+\typerule{Ctx-SolvedEvar}{
+    \Gamma\ ctx \\
+    \alpha \notin \mathrm{dom}(\Gamma) \\
+    \Gamma \vdash \tau}{
+    \Gamma, \hat{\alpha} = \tau\ ctx
+}
+
+\end{mathpar}
+% refs:
+% http://ps.informatik.uni-tuebingen.de/research/functors/equirecursion-fomega-popl16.pdf - system fω with equirecursion; mostly stole sysfω notation and products/variants
+% https://www.cs.cornell.edu/courses/cs4110/2012fa/lectures/lecture27.pdf - isorecursion, equirecursion
+% Dunfield 2013 - https://research.cs.queensu.ca/home/jana/papers/bidir/
+% https://blog.jez.io/system-f-param/
+% TODO: put these in a bibliography
+
+\end{document}
+
