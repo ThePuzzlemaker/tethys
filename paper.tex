@@ -131,8 +131,8 @@ This section is, unsurprisingly, work-in-progress.
     \syn{\lambda x . e}{lambda abstraction}
     \syn{e\;e}{lambda application}
     \syn{e [ \tau ]}{type application}
-    \syn{\<unfold>_{\mu \alpha . \tau} : \mu \alpha . \tau \rarr \tau [ \mu \alpha . \tau / \alpha ]}{isorecursive folding}
-    \syn{\<fold>_{\mu \alpha . \tau} : \tau [ \mu \alpha . \tau / \alpha ] \rarr \mu \alpha . \tau}{isorecursive unfolding}
+    \syn{\<unfold>_{\mu \alpha . \tau} : \mu \alpha . \tau \rarr [ \mu \alpha . \tau / \alpha ] \tau}{isorecursive folding}
+    \syn{\<fold>_{\mu \alpha . \tau} : [ \mu \alpha . \tau / \alpha ] \tau \rarr \mu \alpha . \tau}{isorecursive unfolding}
 \end{align*}
 
 \begin{align*}
@@ -141,6 +141,7 @@ This section is, unsurprisingly, work-in-progress.
     \syn{\<true>, \<false>}{boolean literals}
     \syn{\dotso, -2, -1, 0, 1, 2, \dotso}{integer literals}
     \syn{+, -, *, /, \<mod> : \<int> \rarr \<int> \rarr \<int>}{arithmetic operators}
+    \syn{<, >, \leqslant, \geqslant, \equiv, \not\equiv\ : \<int> \rarr \<int> \rarr \<bool>}{arithmetic comparisons}
     \syn{\<and>, \<or> : \<bool> \rarr \<bool> \rarr \<bool>}{binary boolean operators}
     \syn{\<not> : \<bool> \rarr \<bool>}{negation}
     \syn{\<cond> : \forall \alpha . \<bool> \rarr \alpha \rarr \alpha}{conditional}
@@ -275,4 +276,3 @@ Context $\Gamma$ is well-formed
 % TODO: put these in a bibliography
 
 \end{document}
-
