@@ -1,6 +1,7 @@
 \documentclass[11pt]{article}
 \usepackage[ligature,reserved]{semantic}
-\usepackage[utf8x]{inputenc}
+\usepackage[utf8]{inputenc}
+\usepackage{csquotes}
 \usepackage[english]{babel}
 \usepackage{hyperref}
 \usepackage{hyphenat}
@@ -13,6 +14,14 @@
 \usepackage{mathpartir}
 \usepackage{scalerel}
 \usepackage{stackengine}
+
+\usepackage[
+    backend=biber,
+    style=alphabetic,
+    sorting=nyt
+]{biblatex}
+
+\addbibresource{biblio.bib}
 
 \hypersetup{
     colorlinks=true,
@@ -115,7 +124,7 @@ This section is, unsurprisingly, work-in-progress.
 \begin{align*}
 \syng{A, B, C}{types:}
     \syn{\sigma, \tau}{monotypes}
-    \syn{\forall(\alpha :: \kappa).A}{universal quantification}
+    \syn{\forall(\alpha:: \kappa).A}{universal quantification}
     \syn{\lambda(\alpha :: \kappa).A}{type-level lambdas (type constructor)}
     \syn{A\;B}{type-level application}
 \end{align*}
@@ -268,11 +277,11 @@ Context $\Gamma$ is well-formed
 }
 
 \end{mathpar}
-% refs:
-% http://ps.informatik.uni-tuebingen.de/research/functors/equirecursion-fomega-popl16.pdf - system fω with equirecursion; mostly stole sysfω notation and products/variants
-% https://www.cs.cornell.edu/courses/cs4110/2012fa/lectures/lecture27.pdf - isorecursion, equirecursion
-% Dunfield 2013 - https://research.cs.queensu.ca/home/jana/papers/bidir/
-% https://blog.jez.io/system-f-param/
-% TODO: put these in a bibliography
+
+\section*{References}
+
+\nocite{*}
+
+\printbibliography[heading=none]
 
 \end{document}

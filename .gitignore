@@ -5,3 +5,7 @@
 *.log
 *.out
 *.toc
+*.bbl
+*.bcf
+*.blg
+*.xml

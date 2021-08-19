@@ -2,4 +2,6 @@ all:
 	latexmk -pdf paper.tex
 clean:
 	latexmk -c
-	rm paper.dvi
+	rm -f paper.dvi
+	rm -f paper.bbl
+	rm -f paper.run.xml
