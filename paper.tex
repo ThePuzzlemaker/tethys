@@ -1,3 +1,6 @@
+% chktex-file 1
+% chktex-file 26
+% chktex-file 35
 \documentclass[11pt]{article}
 \usepackage[ligature,reserved]{semantic}
 \usepackage[utf8]{inputenc}
@@ -250,7 +253,7 @@ Context $\Gamma$ is well-formed
 
 \typerule{Ctx-Var}{
     \Gamma\ ctx \\
-    x \notin \mathrm{dom}(\Gamma) \\
+    x \notin \mathrm{dom} (\Gamma) \\
     \Gamma \vdash A
     }{
     \Gamma, x : A\ ctx
@@ -258,27 +261,27 @@ Context $\Gamma$ is well-formed
 
 \typerule{Ctx-Uvar}{
     \Gamma\ ctx \\
-    \alpha \notin \mathrm{dom}(\Gamma) \\
+    \alpha \notin \mathrm{dom} (\Gamma) \\
     \Gamma \vdash \kappa}{
     \Gamma, \alpha :: \kappa\ ctx
 }
 
 \typerule{Ctx-Evar}{
     \Gamma\ ctx \\
-    \alpha \notin \mathrm{dom}(\Gamma)}{
+    \alpha \notin \mathrm{dom} (\Gamma)}{
     \Gamma, \hat{\alpha}\ ctx
 }
 
 \typerule{Ctx-SolvedEvar}{
     \Gamma\ ctx \\
-    \alpha \notin \mathrm{dom}(\Gamma) \\
+    \alpha \notin \mathrm{dom} (\Gamma) \\
     \Gamma \vdash \tau}{
     \Gamma, \hat{\alpha} = \tau\ ctx
 }
 
 \end{mathpar}
 
-\section*{References}
+\section{References}
 
 \nocite{*}
 
