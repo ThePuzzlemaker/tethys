@@ -9,4 +9,10 @@
 *.bcf
 *.blg
 *.xml
-out/
+*.synctex.gz
+*.synctex(busy)
+.vscode/
+
+# Added by cargo
+
+/target

@@ -12,4 +12,4 @@ More information on Calypso (the language, of course) is available at [https://c
 
 ## "Paper"
 
-The source for the "paper" (really just a typeset informal writeup) is in [`paper.tex`](paper.tex) (requires pdftex). At some points there may be a PDF in the repository but there is no guarantee that it is up-to-date with the LaTeX source.
+The source for the "paper" (really just a typeset informal writeup) is in [`paper/paper.tex`](paper/paper.tex) (requires pdftex). At some points there may be a PDF in the repository but there is no guarantee that it is up-to-date with the LaTeX source.

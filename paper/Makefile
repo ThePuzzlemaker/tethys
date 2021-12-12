@@ -5,3 +5,4 @@ clean:
 	rm -f paper.dvi
 	rm -f paper.bbl
 	rm -f paper.run.xml
+	rm -f paper.synctex.gz

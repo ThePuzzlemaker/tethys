@@ -1,0 +1,48 @@
+def foo
+  : forall 'a 'x. (forall 'b. foo) -> (forall 'c. bar -> ())
+  = .
+
+# def id
+#   : forall 'a. 'a -> 'a
+#   = \x.x
+# 
+# def const
+#   : forall 'a 'b. 'a -> 'b -> 'a
+#   = \x y.x
+
+# Commented out for now
+
+# type List['a] = Nil | Cons T List['a]
+# 
+# def rangeI
+#   : Int -> Int -> List[Int]
+#   = \min max.
+#     let rec helper = \n acc.
+#       if (n == min - 1)
+#         then acc
+#       else helper (n - 1) (Cons n acc)
+#     in helper max Nil
+# 
+# def divides
+#   : Int -> Int -> bool
+#   = \n m.m % n == 0
+# 
+# def rec concat
+#   : forall 'a. List['a] -> List['a] -> List['a]
+#   = \xs ys.
+#     match xs with
+#     | Nil -> ys
+#     \ Cons x xs -> Cons x (concat xs ys)
+# 
+# def map
+#   : forall 'a 'b. List['a] -> ('a -> 'b) -> List['b]
+#   = \xs f.
+#     let rec helper = \xs acc.
+#       match xs with
+#       | Nil -> acc
+#       \ Cons x xs -> helper xs (concat acc (Cons (f x) Nil)) 
+#     in helper xs Nilprelude required for this
+# 
+# def each
+#   : forall 'a. List['a] -> ('a -> ()) -> ()
+#   = \xs f. let _ = map xs f in ()
