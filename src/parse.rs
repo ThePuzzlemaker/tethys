@@ -103,21 +103,55 @@ pub fn parser() -> impl Parser<Token, Spanned<NamedDecl>, Error = Simple<Token>>
         let primary = ident
             .map(NamedTy::Free)
             .or(seq([Token::LParen, Token::RParen].into_iter()).map(|_| NamedTy::Unit))
-            .or(ty.delimited_by(Token::LParen, Token::RParen))
+            .or(ty.clone().delimited_by(Token::LParen, Token::RParen))
             .or(tyvar.map(NamedTy::Var));
 
         let arrow = primary
             .clone()
-            .then(just(Token::Arrow).ignore_then(primary).repeated())
+            .then(just(Token::Arrow).ignore_then(ty).repeated())
             .foldl(|lhs, rhs| NamedTy::Arrow(Box::new(lhs), Box::new(rhs)));
 
         just(Token::Forall)
             .ignore_then(tyvar.repeated())
             .then_ignore(just(Token::Dot))
+            .or_not()
             .then(arrow)
+            .map(|(vars, ty)| (vars.unwrap_or_default(), ty))
             .foldr(|var, ty| NamedTy::Forall(var, Box::new(ty)))
     });
-    let expr = just(Token::Dot).map(|_| NamedExpr::Unit);
+
+    let expr = recursive(|expr| {
+        let primary = ident
+            .map(NamedExpr::Var)
+            .or(seq([Token::LParen, Token::RParen].into_iter()).map(|_| NamedExpr::Unit))
+            .or(expr.clone().delimited_by(Token::LParen, Token::RParen));
+
+        let appl = primary
+            .clone()
+            .then(primary.repeated())
+            .map(|(lhs, rhs)| (rhs.into_iter().rev(), lhs))
+            .foldr(|rhs, lhs| NamedExpr::Apply(Box::new(lhs), Box::new(rhs)));
+
+        let lambda = just(Token::Backslash)
+            .ignore_then(ident.repeated())
+            .then_ignore(just(Token::Dot))
+            .or_not()
+            .then(appl)
+            .map(|(vars, expr)| (vars.unwrap_or_default(), expr))
+            .foldr(|var, expr| NamedExpr::Lambda(var, Box::new(expr)));
+
+        just(Token::Let)
+            .ignore_then(ident)
+            .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
+            .then_ignore(just(Token::Eq))
+            .then(lambda.clone())
+            .then_ignore(just(Token::In))
+            .then(expr)
+            .map(|(((ident, ty), expr), inn)| {
+                NamedExpr::Let(ident, ty.map(Box::new), Box::new(expr), Box::new(inn))
+            })
+            .or(lambda)
+    });
 
     let decl = recursive(|decl| {
         just(Token::Def)

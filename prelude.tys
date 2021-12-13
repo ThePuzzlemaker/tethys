@@ -1,6 +1,9 @@
 def foo
-  : forall 'a 'x. (forall 'b. foo) -> (forall 'c. bar -> ())
-  = .
+  : forall 'a 'b. 'a -> 'b -> 'a
+  = let const : forall 'a 'b. 'a -> 'b -> 'a
+              = \x y. x in
+    let id = \x.x in
+    id const
 
 # def id
 #   : forall 'a. 'a -> 'a

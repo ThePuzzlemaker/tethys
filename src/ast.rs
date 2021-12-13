@@ -14,9 +14,8 @@ pub enum NamedExpr {
     Unit,
     Var(String),
     Apply(Box<NamedExpr>, Box<NamedExpr>),
-    Annotate(Box<NamedExpr>, Box<NamedTy>),
     Lambda(String, Box<NamedExpr>),
-    Let(String, Box<NamedExpr>, Box<NamedExpr>),
+    Let(String, Option<Box<NamedTy>>, Box<NamedExpr>, Box<NamedExpr>),
 }
 
 #[derive(Clone, Debug)]
