@@ -1,0 +1,93 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "Tethys",
+	"patterns": [
+		{
+			"include": "#definition"
+		},
+		{
+			"include": "#types"
+		},
+		{
+			"include": "#exprs"
+		},
+		{
+			"include": "#comments"
+		},
+		{
+			"name": "keyword.operator.tethys",
+			"match": "\\.|:|=|\\(|\\)"
+		}
+	],
+	"repository": {
+		"definition": {
+			"match": "(\\bdef\\b)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+			"captures": {
+				"1": {
+					"name": "storage.type.tethys"
+				},
+				"2": {
+					"name": "entity.name.tethys"
+				}
+			}
+		},
+		"types": {
+			"patterns": [
+				{
+					"name": "keyword.operator.tethys",
+					"match": "(\\bforall\\b|->)"
+				},
+				{
+					"name": "storage.type.tethys",
+					"match": "'[A-Za-z_][A-Za-z0-9_]*"
+				},
+				{
+					"name": "support.type.tethys",
+					"match": "\\(\\)"
+				}
+			]
+		},
+		"exprs": {
+			"patterns": [
+				{
+					"name": "keyword.control.tethys",
+					"match": "\\bin\\b"
+				},
+				{
+					"match": "(\\blet\\b)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+					"captures": {
+						"1": {
+							"name": "keyword.control.tethys"
+						},
+						"2": {
+							"name": "entity.name.tethys"
+						}
+					}
+				},
+				{
+					"begin": "(\\\\)\\s*",
+					"beginCaptures": {
+						"1": {
+							"name": "keyword.control.tethys"
+						}
+					},
+					"end": "\\.",
+					"patterns": [{
+						"match": "\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*",
+						"captures": {
+							"1": {
+								"name": "entity.name.tethys"
+							}
+						}
+					}]
+				}
+			]
+		},
+		"comments": {
+			"name": "comment.line.number-sign",
+			"begin": "#",
+			"end": "\n"
+		}
+	},
+	"scopeName": "source.tethys"
+}

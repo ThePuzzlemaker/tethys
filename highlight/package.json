@@ -1,0 +1,31 @@
+{
+    "name": "tethys-lang",
+    "displayName": "Tethys Syntax Highlighting",
+    "description": "Syntax Highlighting for Tethys",
+    "publisher": "calypso-lang",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.63.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "author": "ThePuzzlemaker <tpzker@thepuzzlemaker.info>",
+    "bugs": "https://github.com/ThePuzzlemaker/Tethys/issues",
+    "homepage": "https://github.com/ThePuzzlemaker/Tethys",
+    "license": "MIT",
+    "repository": "github:ThePuzzlemaker/Tethys",
+    "contributes": {
+        "languages": [{
+            "id": "tethys",
+            "aliases": ["Tethys", "tethys"],
+            "extensions": [".tys"],
+            "configuration": "./language-configuration.json"
+        }],
+        "grammars": [{
+            "language": "tethys",
+            "scopeName": "source.tethys",
+            "path": "./syntaxes/tethys.tmLanguage.json"
+        }]
+    }
+}
