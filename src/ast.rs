@@ -27,6 +27,7 @@ pub enum NamedDecl {
 pub enum Ty<'tcx> {
     Unit,
     Var(Level),
+    Free(&'tcx Decl<'tcx>),
     Arrow(&'tcx Ty<'tcx>, &'tcx Ty<'tcx>),
     Forall(&'tcx Ty<'tcx>, Vec<&'tcx Ty<'tcx>>),
     Hole(HoleId),
@@ -36,10 +37,15 @@ pub enum Ty<'tcx> {
 pub enum Expr<'tcx> {
     Unit,
     Var(Level),
-    Apply(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
-    Annotate(Box<Expr<'tcx>>, &'tcx Ty<'tcx>),
-    Lambda(Box<Expr<'tcx>>),
-    Let(Box<Expr<'tcx>>, Box<Expr<'tcx>>),
+    Free(&'tcx Decl<'tcx>),
+    Apply(&'tcx Expr<'tcx>, &'tcx Expr<'tcx>),
+    Lambda(&'tcx Expr<'tcx>),
+    Let(Option<&'tcx Ty<'tcx>>, &'tcx Expr<'tcx>, &'tcx Expr<'tcx>),
+}
+
+#[derive(Clone, Debug)]
+pub enum Decl<'tcx> {
+    Defn(String, &'tcx Ty<'tcx>, &'tcx Expr<'tcx>),
 }
 
 pub type Level = usize;

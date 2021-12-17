@@ -1,14 +1,18 @@
-use std::{env, fs};
+use std::{collections::HashMap, env, fs};
 
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
+use ast::NamedTy;
 use chumsky::{Parser, Stream};
 use color_eyre::eyre;
 use logos::Logos;
 use parse::{parser, Token};
+use resolve::ResCtxt;
+use typed_arena::Arena;
 
 pub mod ast;
 pub mod infer;
 pub mod parse;
+pub mod resolve;
 
 fn main() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -20,7 +24,7 @@ fn main() -> eyre::Result<()> {
     let stream = Stream::from_iter(src.len()..src.len() + 1, lex);
     let (ast, parse_errs) = parser().parse_recovery(stream);
 
-    println!("{:?}", ast.map(|x| x.0));
+    println!("{:?}", ast.as_ref().map(|x| &x.0));
 
     parse_errs
         .into_iter()
@@ -89,6 +93,19 @@ fn main() -> eyre::Result<()> {
             report.finish().print(Source::from(&src)).unwrap();
         });
     // TODO: better errors
+
+    let tya = Arena::new();
+    let expra = Arena::new();
+    let decla = Arena::new();
+    let mut rcx = ResCtxt {
+        ty: &tya,
+        expr: &expra,
+        decl: &decla,
+        decls: HashMap::new(),
+        expr_names: vec![],
+        ty_names: vec![],
+    };
+    println!("{:?}", ast.unwrap().0.resolve(&mut rcx));
 
     Ok(())
 }
