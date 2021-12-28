@@ -1,3 +1,46 @@
+//! This module implements Tethys's IR, also called its core language.
+//!
+//! It is ~~stolen~~ heavily inspired by rustc's HIR (high-level intermediate
+//! representation). For more information [see the rustc dev guide][1].
+//!
+//! [1]: https://rustc-dev-guide.rust-lang.org/hir.html
+//!
+//! The main structure of the IR is the [`CodeUnit`], which at the moment is
+//! the term for the AST/IR for a file of code. This contains a map from
+//! [`DefnId`]s to [`OwnerNodes`], which themselves contain a map from
+//! [`LocalId`]s to [`ParentedNode`]s (a [`Node`] associated with its parent).
+//!
+//! The concept of an owner is important in this structure. Each node in the IR
+//! has a parent and an owner. The meaning of a node's parent is fairly self-
+//! explanatory: it refers to the node which has the current node as its child.
+//! The concept of an owner is perhaps a bit less self-explanatory--the owner
+//! of a node is the definition (indexed by [`DefnId`]) that contains the
+//! current node (indexed by [`LocalId`]). Currently, the only nodes that are
+//! owners are items (i.e.: `def`, later this will include typedefs and similar
+//! constructs), but at some point this will also include modules, and at that
+//! point the IR's handling of ownership will be slightly tweaked to make
+//! dealing with nested owners easier.
+//!
+//! The IR makes use of various indexes, using [`index_vec`]. These indexes are
+//! as follows:
+//! - [`DefnId`]: The identifier of a definition within the local code unit. In
+//!     the future, this will be extended to support modules/packages.
+//! - [`LocalId`]: The identifier of a node local to an owner. Typically, the
+//!     owner is at index `0`. These identifiers are usually densely clustered
+//!     near `0`.
+//! - [`IrId`]: A combination of a [`DefnId`] and a [`LocalId`], this
+//!     identifier unambiguously refers to a node in the local code unit.
+//!
+//! To look up identifiers, construct a [`Map`] from a
+//! [`crate::ctxt::TyCtxt`] and use the functions provided on that structure.
+//!
+//! For the process of lowering from AST to IR, see [`crate::lowering`].
+//!
+//! // TODO(@ThePuzzlemaker: ir): actually work on IR map
+//!
+//! // TODO(@ThePuzzlemaker: doc): better document the structures/enums within
+//!     this module, beyond this basic overview
+
 use calypso_base::symbol::{Ident, Symbol};
 use index_vec::IndexVec;
 

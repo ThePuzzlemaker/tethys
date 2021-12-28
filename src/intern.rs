@@ -1,10 +1,11 @@
 //! Arena-backed interning using a combination of a [`HashMap`] and a
 //! [`typed_arena::Arena`]. This allows interning to occur, without leaking
 //! memory or requiring the use of [`Arc`](std::sync::Arc) or similar
-//! structures. This strategy is partially based on rustc's interning strategy,
-//! and some of the code is practically verbatim, minus some small
-//! implementation differences (e.g. using a regular [`HashMap`], not a sharded
-//! one)
+//! structures.
+//!
+//! This strategy is partially based on rustc's interning strategy, and some of
+//! the code is practically verbatim, minus some small implementation
+//! differences (e.g. using a regular [`HashMap`], not a sharded one)
 
 use hashbrown::{
     hash_map::{DefaultHashBuilder, RawEntryMut},

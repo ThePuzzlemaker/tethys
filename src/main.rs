@@ -18,9 +18,12 @@ pub mod ctxt;
 pub mod infer;
 pub mod intern;
 pub mod ir;
+pub mod lowering;
 pub mod parse;
 pub mod resolve;
 
+// TODO(@ThePuzzlemaker: frame): move this into a binary, the rest into a
+// library; use thiserror within the lib itself and use that with eyre here
 fn main() -> eyre::Result<()> {
     tracing_subscriber::fmt::init();
     color_eyre::install()?;
