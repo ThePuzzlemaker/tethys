@@ -15,6 +15,7 @@ derive_more = "0.99.17"
 pretty = "0.11.2"
 hashbrown = "0.11.2"
 index_vec = "0.1.3"
+thiserror = "1.0.30"
 
 [dependencies.calypso_base]
 git = "https://github.com/calypso-lang/calypso.git"

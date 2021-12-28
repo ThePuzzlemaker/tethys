@@ -1,3 +1,5 @@
+// TODO(@ThePuzzlemaker: ast): It's probably a good idea to add node IDs to
+//     this AST at some point, as lowering gets more complex it'll be easier to map to source elements
 use calypso_base::symbol::{Ident, Symbol};
 
 use super::Span;
@@ -82,7 +84,7 @@ impl Decl {
 
 #[derive(Clone, Debug)]
 pub enum DeclKind {
-    Defn(Ident, Box<Ty>, Box<Expr>, Option<Box<Decl>>),
+    Defn(Ident, Box<Ty>, Box<Expr>),
 }
 
 impl DeclKind {

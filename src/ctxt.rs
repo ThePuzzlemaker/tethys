@@ -1,11 +1,13 @@
+use std::cell::RefCell;
+
 use typed_arena::Arena;
 
-use crate::ir;
+use crate::{diag::DiagReportCtxt, ir};
 
-#[derive(Copy, Clone)]
 pub struct TyCtxt<'tcx> {
-    pub arena: &'tcx Arenas<'tcx>,
+    pub arenas: &'tcx Arenas<'tcx>,
     pub intern: Interners<'tcx>,
+    pub drcx: RefCell<DiagReportCtxt>,
 }
 
 #[derive(Default)]
@@ -21,8 +23,7 @@ pub struct Arenas<'tcx> {
     pub ir: IrArenas<'tcx>,
 }
 
-#[derive(Copy, Clone)]
 pub struct Interners<'tcx> {
     /// The arena that interned objects are allocated from.
-    pub(crate) arena: &'tcx Arenas<'tcx>,
+    pub(crate) arenas: &'tcx Arenas<'tcx>,
 }

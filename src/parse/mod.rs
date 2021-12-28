@@ -11,6 +11,8 @@ use calypso_base::{
 
 use ast::{Decl, DeclKind, Expr, ExprKind, Ty, TyKind};
 
+pub type SyntaxError = Simple<Token, Span>;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Deref)]
 #[repr(transparent)]
 pub struct Span(pub span::Span);
@@ -119,7 +121,7 @@ impl Token {
     }
 }
 
-pub fn parser() -> impl Parser<Token, ast::Decl, Error = Simple<Token, Span>> + Clone {
+pub fn parser() -> impl Parser<Token, Vec<ast::Decl>, Error = Simple<Token, Span>> + Clone {
     let ident = filter_map(|span: Span, tok| {
         if let Token::Ident(s) = tok {
             Ok(Ident {
@@ -228,23 +230,22 @@ pub fn parser() -> impl Parser<Token, ast::Decl, Error = Simple<Token, Span>> + 
             .or(lambda)
     });
 
-    let decl = recursive(|decl| {
-        just(Token::Def)
-            .map_with_span(|_, span| span)
-            .then(ident)
-            .then_ignore(just(Token::Colon))
-            .then(ty)
-            .then_ignore(just(Token::Eq))
-            .then(expr)
-            .then(decl.or_not())
-            .map(|((((sp, name), ty), expr), decl)| {
-                let sp = sp.with_hi(expr.span.hi()).into();
-                Decl::new(
-                    DeclKind::Defn(name, Box::new(ty), Box::new(expr), decl.map(Box::new)),
-                    sp,
-                )
-            })
-    });
+    let decl = just(Token::Def)
+        .map_with_span(|_, span| span)
+        .then(ident)
+        .then_ignore(just(Token::Colon))
+        .then(ty)
+        .then_ignore(just(Token::Eq))
+        .then(expr)
+        .repeated()
+        .map(|vec| {
+            vec.into_iter()
+                .map(|(((sp, name), ty), expr)| {
+                    let sp = sp.with_hi(expr.span.hi()).into();
+                    Decl::new(DeclKind::Defn(name, Box::new(ty), Box::new(expr)), sp)
+                })
+                .collect::<Vec<_>>()
+        });
 
     decl.then_ignore(end())
 }

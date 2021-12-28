@@ -5,6 +5,8 @@ def foo
     let id = \x.x in
     id const
 
+def foo : forall 'a. 'a -> 'a = \x.x
+
 def id
   : forall 'a. 'a -> 'a
   = \x.x

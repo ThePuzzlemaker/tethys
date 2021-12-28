@@ -11,7 +11,7 @@ index_vec::define_index_type! {
     pub struct LocalId = u32;
 
     DISABLE_MAX_INDEX_CHECK = cfg!(not(debug_assertions));
-    DEBUG_FORMAT = "ItemLocalId({})";
+    DEBUG_FORMAT = "LocalId({})";
     DISPLAY_FORMAT = "{}";
     IMPL_RAW_CONVERSIONS = true;
 }

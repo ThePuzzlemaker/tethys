@@ -1,20 +1,24 @@
-use std::{collections::HashMap, env, fs};
+use std::{cell::RefCell, collections::HashMap, env, fs};
 
 use ariadne::{Color, Config, Fmt, Label, Report, ReportBuilder, ReportKind, Source};
 use calypso_base::{span, symbol::Ident};
 use chumsky::{Parser, Stream};
 use color_eyre::eyre;
+use ctxt::{Arenas, TyCtxt};
+use diag::DiagReportCtxt;
 use logos::Logos;
 use parse::{parser, Token};
 use typed_arena::Arena;
 
 use crate::parse::Span;
-use crate::resolve::ast::{Decl, DeclKind, Expr, ExprKind, Ty, TyKind};
-use crate::resolve::ResCtxt;
+// use crate::resolve::ast::{Decl, DeclKind, Expr, ExprKind, Ty, TyKind};
+// use crate::resolve::ResCtxt;
 // use resolve::ResCtxt;
 // use typed_arena::Arena;
 
 pub mod ctxt;
+pub mod diag;
+pub mod error;
 pub mod infer;
 pub mod intern;
 pub mod ir;
@@ -38,7 +42,7 @@ fn main() -> eyre::Result<()> {
     });
     let srclen = src.len().try_into().unwrap();
     let stream = Stream::from_iter(parse::Span(span::Span::new(srclen, srclen + 1)), lex);
-    let (ast, parse_errs) = parser().parse_recovery(stream);
+    let (decls, parse_errs) = parser().parse_recovery(stream);
 
     parse_errs
         .into_iter()
@@ -222,25 +226,45 @@ fn main() -> eyre::Result<()> {
     //     .unwrap();
     // TODO: better errors
 
-    let tya = Arena::new();
-    let expra = Arena::new();
-    let decla = Arena::new();
-    let mut rcx = ResCtxt {
-        ty: &tya,
-        expr: &expra,
-        decl: &decla,
-        decls: HashMap::new(),
-        expr_names: vec![],
-        ty_names: vec![],
+    let arenas = Arenas::default();
+    let tcx = TyCtxt {
+        arenas: &arenas,
+        intern: ctxt::Interners { arenas: &arenas },
+        drcx: RefCell::new(DiagReportCtxt::new()),
     };
-    let ast = *ast.unwrap().resolve(&mut rcx)?.get(1).unwrap();
-    let ppa = pretty::Arena::new();
-    match ast.kind {
-        DeclKind::Defn(_, ty, expr) => {
-            println!("{}", ty.pretty(&ppa).pretty(80));
-            println!("{}", expr.pretty(&ppa).pretty(80));
-        }
+    println!(
+        "{:#?}",
+        lowering::lower_code_unit(&tcx, decls.expect("decls"))
+    );
+
+    let drcx = tcx.drcx.borrow();
+    for err in drcx.errors() {
+        err.eprint(Source::from(&src))?;
     }
+
+    if let Some(fatal) = drcx.fatal() {
+        fatal.eprint(Source::from(&src))?;
+    }
+
+    // let tya = Arena::new();
+    // let expra = Arena::new();
+    // let decla = Arena::new();
+    // let mut rcx = ResCtxt {
+    //     ty: &tya,
+    //     expr: &expra,
+    //     decl: &decla,
+    //     decls: HashMap::new(),
+    //     expr_names: vec![],
+    //     ty_names: vec![],
+    // };
+    // let ast = *ast.unwrap().resolve(&mut rcx)?.get(1).unwrap();
+    // let ppa = pretty::Arena::new();
+    // match ast.kind {
+    //     DeclKind::Defn(_, ty, expr) => {
+    //         println!("{}", ty.pretty(&ppa).pretty(80));
+    //         println!("{}", expr.pretty(&ppa).pretty(80));
+    //     }
+    // }
 
     Ok(())
 }

@@ -590,6 +590,7 @@ dependencies = [
  "index_vec",
  "logos",
  "pretty",
+ "thiserror",
  "tracing",
  "tracing-subscriber 0.3.3",
  "typed-arena",

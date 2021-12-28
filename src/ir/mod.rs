@@ -62,15 +62,54 @@ pub struct OwnerNodes<'ir> {
     pub nodes: IndexVec<LocalId, ParentedNode<'ir>>,
 }
 
+impl<'ir> OwnerNodes<'ir> {
+    pub fn node(&self) -> OwnerNode<'ir> {
+        self.nodes
+            .get(LocalId::from_raw(0))
+            .expect("owner node in OwnerNodes")
+            .node
+            .as_owner()
+            .expect("node 0 is owner")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ParentedNode<'ir> {
-    pub parent: IrId,
+    pub parent: LocalId,
     pub node: Node<'ir>,
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum OwnerNode<'ir> {
     Item(&'ir Item<'ir>),
+}
+
+impl<'ir> OwnerNode<'ir> {
+    pub fn expect_item(self) -> &'ir Item<'ir> {
+        match self {
+            OwnerNode::Item(item) => item,
+        }
+    }
+
+    pub fn span(self) -> Span {
+        match self {
+            OwnerNode::Item(Item { span, .. }) => *span,
+        }
+    }
+
+    pub fn ident(self) -> Option<Ident> {
+        match self {
+            OwnerNode::Item(Item { ident, .. }) => Some(*ident),
+        }
+    }
+}
+
+impl<'ir> From<OwnerNode<'ir>> for Node<'ir> {
+    fn from(node: OwnerNode<'ir>) -> Self {
+        match node {
+            OwnerNode::Item(item) => Node::Item(item),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -80,9 +119,34 @@ pub enum Node<'ir> {
     Ty(&'ir Ty<'ir>),
 }
 
+impl<'ir> Node<'ir> {
+    pub fn as_owner(self) -> Option<OwnerNode<'ir>> {
+        match self {
+            Node::Item(item) => Some(OwnerNode::Item(item)),
+            _ => None,
+        }
+    }
+
+    pub fn span(self) -> Span {
+        *match self {
+            Self::Item(Item { span, .. }) => span,
+            Self::Expr(Expr { span, .. }) => span,
+            Self::Ty(Ty { span, .. }) => span,
+        }
+    }
+
+    pub fn ident(self) -> Option<Ident> {
+        match self {
+            Self::Item(Item { ident, .. }) => Some(*ident),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Item<'ir> {
     pub ir_id: IrId,
+    pub ident: Ident,
     pub kind: ItemKind<'ir>,
     pub span: Span,
 }
@@ -90,7 +154,7 @@ pub struct Item<'ir> {
 #[derive(Debug)]
 pub enum ItemKind<'ir> {
     /// A value definition, as defined by `def`.
-    Value(Ident, &'ir Ty<'ir>, &'ir Expr<'ir>),
+    Value(&'ir Ty<'ir>, &'ir Expr<'ir>),
 }
 
 #[derive(Debug)]
@@ -120,6 +184,8 @@ pub struct Ty<'ir> {
 
 #[derive(Debug)]
 pub enum TyKind<'ir> {
+    /// N.B. This will eventually be generalized to tuples
+    Unit,
     Path(Path),
     Arrow(&'ir Ty<'ir>, &'ir Ty<'ir>),
     Forall(Ident, &'ir Ty<'ir>),
