@@ -1,8 +1,5 @@
 pub mod ast;
-use std::{
-    fmt::{self, Display},
-    iter,
-};
+use std::iter;
 
 use chumsky::prelude::*;
 use logos::{Lexer, Logos};
@@ -29,7 +26,7 @@ impl chumsky::Span for Span {
 
     type Offset = u32;
 
-    fn new(context: (), range: std::ops::Range<Self::Offset>) -> Self {
+    fn new(_context: (), range: std::ops::Range<Self::Offset>) -> Self {
         Self(span::Span::new(range.start, range.end))
     }
 
@@ -179,7 +176,7 @@ pub fn parser() -> impl Parser<Token, ast::Decl, Error = Simple<Token, Span>> + 
                 let sp = sp.with_hi(ty.span.hi()).into();
                 (sp, Ty::new(TyKind::Forall(var, Box::new(ty)), sp))
             })
-            .map(|(sp, ty)| ty);
+            .map(|(_, ty)| ty);
 
         forall.or(arrow)
     });
@@ -210,7 +207,7 @@ pub fn parser() -> impl Parser<Token, ast::Decl, Error = Simple<Token, Span>> + 
                 let sp = sp.with_hi(expr.span.hi()).into();
                 (sp, Expr::new(ExprKind::Lambda(var, Box::new(expr)), sp))
             })
-            .map(|(sp, expr)| expr)
+            .map(|(_, expr)| expr)
             .or(appl);
 
         just(Token::Let)
