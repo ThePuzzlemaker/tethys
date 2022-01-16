@@ -4,8 +4,9 @@
 \documentclass[11pt]{article}
 \usepackage[ligature,reserved]{semantic}
 \usepackage[utf8]{inputenc}
+\usepackage[american]{babel}
 \usepackage{csquotes}
-\usepackage[english]{babel}
+\usepackage[dvipsnames]{xcolor}
 \usepackage{hyperref}
 \usepackage{hyphenat}
 \usepackage{amsfonts}
@@ -20,8 +21,7 @@
 
 \usepackage[
     backend=biber,
-    style=alphabetic,
-    sorting=nyt
+    style=apa,
 ]{biblatex}
 
 \addbibresource{biblio.bib}
@@ -31,6 +31,7 @@
     linkcolor=blue,
     filecolor=magenta,
     urlcolor=cyan,
+    citecolor=Green,
     pdfpagemode=FullScreen,
 }
 
@@ -98,7 +99,7 @@
     \large A Toy Functional Programming Language\\
     with a System F$\omega$-based Core Calculus\\
     \url{https://github.com/ThePuzzlemaker/tethys}}
-\author{The Puzzlemaker}
+\author{James [Redacted] (aka ThePuzzlemaker)}
 \date{\today}
 
 \begin{document}
@@ -110,13 +111,82 @@
 
 \section{Introduction}
 
-This ``paper'' (which is really just a well-typeset, but somewhat informal write-up) introduces Tethys, a toy functional programming language based on a System F$\omega$-based core calculus. Hence the title.
+This ``paper'' (which is really just a well-typeset, but somewhat informal
+    write-up) introduces Tethys, a toy functional programming language based on
+    a System F$\omega$-based core calculus. Hence the title.
 
-There are two parts of Tethys: the surface language, and the core calculus. The core calculus is the intermediate representation of Tethys which is used for type checking and inference, and for interpretation. The surface language is the higher-level interface that is eventually desugared by the compiler/interpreter to the core calculus.
+There are two parts of Tethys: the surface language, and the core calculus. The
+    core calculus is the intermediate representation of Tethys which is used
+    for type checking and inference, and for interpretation. The surface
+    language is the higher-level interface that is eventually desugared by the
+    compiler/interpreter to the core calculus.
 
-The reference implementation in Rust will not use any particular ``tricks'' in terms of interpretation, instead just using a simple tree-walk interpreter or similar.
+The reference implementation in Rust will not use any particular ``tricks'' in
+    terms of interpretation, instead just using a simple tree-walk interpreter
+    or similar.
 
-This language was created in order to conduct informal research (i.e., not actually discovering anything interesting, probably) on type systems, especially bidirectional typechecking and polymorphism. Tethys is named as such as it is the name of the co-orbital moon to Calypso; as my work on this language is ``co-orbital'', so to speak, to my work on \href{https://calypso-lang.github.io}{Calypso}.
+This language was created in order to conduct informal research (i.e., not
+    actually discovering anything interesting, probably) on type systems,
+    especially bidirectional typechecking and polymorphism. Tethys is named as
+    such as it is the name of the co-orbital moon to Calypso; as my work on
+    this language is ``co-orbital'', so to speak, to my work on
+    \href{https://calypso-lang.github.io}{Calypso}.
+
+Please note that I am not an expert in pretty much any subject this writeup
+    covers. If you notice something you don't understand, or that you think is
+    a mistake, don't fret to point it out.
+
+\subsection{Background}
+
+\begin{quote}
+    Note: This section is taken from
+        \href{https://thepuzzlemaker.info/static/tethys-slides/}{some slides I
+        prepared for a lightning talk} in the
+        \href{https://discord.gg/26X6ChQQcG}{r/PL Discord server}. If it seems
+        a bit un-prose-y, that's why.
+\end{quote}
+
+Originally, I thought I needed to use System F$\omega$, an extension of the
+    polymorphic typed lambda calculus (System F), with the extension of type
+    lambdas. However, it has some problems:
+
+\begin{itemize}
+    \item System F is already undecidable enough, with respect to inference.
+        Adding \emph{more} types of types does \textbf{not} help.
+    \item Theoretically, bidirectional typechecking (my chosen strategy)
+        doesn't \emph{need} unification, but it sure makes it nice. And having
+        type lambdas means you need higher order unfication, which is scary
+        because anything including ``higher-order'' in its name is automatically
+        scary. Also it's undecidable, so you have to restrict yourself to
+        higher-order pattern unification, which is still quite scary.
+    \item I just can't really find much good introductory literature on
+        System F$\omega$ (at least, literature that I can understand).
+\end{itemize}
+
+As it turns out, System F$\omega$ is more expressive than F, but \textbf{way}
+    much more of a pain. Not even Haskell, the paragon of kitchen sink type
+    system features has it. (By default, because of course GHC's gonna have it
+    as an extension).
+
+Here are some of the key theoretical differences:
+
+\begin{itemize}
+    \item Within the type system, type constructors are opaque. Defining a type
+        just creates opaque term-level and type-level constants, which don't
+        normalize to the type or term they ``really'' mean. Of course, these
+        are stripped out after typechecking, once they're no longer needed.
+    \item Type constructors are injective, i.e. for some type constructor $C$
+        and types $X$ and $Y$, if $C\;X$ and $C\;Y$ are the same type, then $X$
+        and $Y$ are the same type.
+    \item Differently named type constructors are never equal, even if they
+        ``mean'' the same thing, i.e. for some type constructors $C1$ and $C2$,
+        and type $T$, $C1\;T$ never equals $C2\;T$, no matter how they are
+        defined.
+\end{itemize}
+
+Note that this is pretty much nominal typing! (If my understanding of nominal
+    typing is correct.)
+
 
 \section{The Surface Language}
 
@@ -126,217 +196,19 @@ This section has not been started yet.
 
 This section is, unsurprisingly, work-in-progress.
 
-\subsection{Abstract Syntax}
-
-\begin{align*}
-\syng{\kappa}{kinds:}
-    \syn{*}{concrete types}
-    \syn{\kappa \rarr \kappa}{type constructors}
-\end{align*}
-\begin{align*}
-\syng{\sigma, \tau}{monotypes:}
-    \syn{\alpha}{type variables}
-    \syn{\<bool>}{booleans}
-    \syn{\<int>}{64-bit signed integer}
-    \syn{\tprod{\ttauibar}}{$n$-ary products}
-    \syn{\tsum{\ttauibar}}{$n$-ary sums}
-    \syn{\sigma \rarr \tau}{arrows}
-    \syn{\mu \alpha . \tau}{type-level least fixed-point}
-    \syn{\tlam{\alpha}{\kappa}{\tau}}{type-level lambdas (type constructor)}
-    \syn{\sigma\;\tau}{type-level application}
-\end{align*}
-\begin{align*}
-\syng{A, B, C}{types:}
-    \syn{\sigma, \tau}{monotypes}
-    \syn{\alpha}{type variables}
-    \syn{\tall{\alpha}{\kappa}{A}}{universal quantification}
-    \syn{\tau\;A}{type-level application}
-\end{align*}
-
-\begin{align*}
-\syng{t}{terms:}
-    \syn{x}{variables}
-    \syn{c}{constants}
-    \syn{e : A}{type annotation}
-    \syn{\tprod{\eeibar}}{introduce product}
-    \syn{e.i}{product elimination (projection)}
-    \syn{\tsum{i = e}}{variant introduction (injection)}
-    \syn{\ecase{e}{e}}{variant elimination}
-    \syn{\lambda x . e}{lambda abstraction}
-    \syn{e\;e}{lambda application}
-    \syn{e [ \tau ]}{type application}
-    \syn{\<project>_{\mu \alpha . \tau} : \mu \alpha . \tau \rarr [ \mu \alpha . \tau / \alpha ] \tau}{isorecursive projection}
-    \syn{\<embed>_{\mu \alpha . \tau} : [ \mu \alpha . \tau / \alpha ] \tau \rarr \mu \alpha . \tau}{isorecursive embedding}
-\end{align*}
-\begin{align*}
-\syng{c}{constants and builtins:}
-    \syn{\<fix> : \forall (\alpha :: *).(\alpha \rarr \alpha) \rarr \alpha}{least fixed-point combinator}
-    \syn{\<true>, \<false>}{boolean literals}
-    \syn{\dotso, -2, -1, 0, 1, 2, \dotso}{integer literals}
-    \syn{+, -, *, /, \<mod> : \<int> \rarr \<int> \rarr \<int>}{arithmetic operators}
-    \syn{<, >, \leqslant, \geqslant, \<eq>, \<neq> : \<int> \rarr \<int> \rarr \<bool>}{arithmetic comparisons}
-    \syn{\<and>, \<or> : \<bool> \rarr \<bool> \rarr \<bool>}{binary boolean operators}
-    \syn{\<not> : \<bool> \rarr \<bool>}{negation}
-    \syn{\<cond> : \forall \alpha . \<bool> \rarr \alpha \rarr \alpha \rarr \alpha}{conditional}
-\end{align*}
-
-\begin{align*}
-\syng{\Gamma}{contexts:}
-    \syn{\emptyset}{empty context}
-    \syn{\Gamma, x : A}{variable binding}
-    \syn{\Gamma, \alpha :: \kappa}{type variable binding}
-\end{align*}
-
-\subsubsection{Kinding Rules}
-
-\begin{mathpar}
-\typeaxiom{DeclK-Builtin}{\Gamma \vdash \<bool>, \<int> :: *}
-
-\typerule{DeclK-Prod}{\Gamma \vdash \tau_i :: *\ (\mathrm{for\ all}\ i)}{\Gamma \vdash \{\overline{\tau_i}\} :: *}
-
-\typerule{DeclK-Sum}{\Gamma \vdash \tau_i :: *\ (\mathrm{for\ all}\ i)}{\Gamma \vdash \langle\overline{\tau_i}\rangle :: *}
-
-\typerule{DeclK-Arr}{\Gamma \vdash \sigma :: * \\ \Gamma \vdash \tau :: *}{\Gamma \vdash \sigma \rarr \tau :: *}
-
-\typerule{DeclK-Fix}{\Gamma, \alpha :: \kappa \vdash \tau :: \kappa}{\Gamma \vdash \mu \alpha . \tau :: \kappa}
-
-\typerule{DeclK-Var}{\alpha :: \kappa \in \Gamma}{\Gamma \vdash \alpha :: \kappa}
-
-\typerule{DeclK-All}{\Gamma, \alpha :: \kappa \vdash A :: *}{\Gamma \vdash \forall (\alpha :: \kappa) . A :: *}
-
-\typerule{DeclK-Lam}{\Gamma, \alpha :: \kappa \vdash A :: \kappa'}{\Gamma \vdash \lambda (\alpha :: \kappa) . A :: \kappa \rarr \kappa'}
-
-\typerule{DeclK-App}{\Gamma \vdash A :: \kappa \rarr \kappa' \\ \Gamma \vdash B :: \kappa'}{\Gamma \vdash A\;B :: \kappa'}
-\end{mathpar}
-
-\subsection{Normal Forms of Types}
-
-Normal forms of types are defined as a subset of the syntax of full types, where some terms can only be found with their ``major'' argument(s) in a ``neutral'' position, where they cannot be normalized further without more information.
-
-\begin{align*}
-\syng{\sigma\Nf, \tau\Nf}{normal monotypes:}
-    \syn{\tau\Ne}{neutral monotype}
-    \syn{\<bool>}{booleans}
-    \syn{\<int>}{64-bit signed integer}
-    \syn{\tprod{\overline{\tau\Nf_i}}}{$n$-ary products}
-    \syn{\tsum{\overline{\tau\Nf_i}}}{$n$-ary sums}
-    \syn{\sigma\Nf \rarr \tau\Nf}{arrows}
-    \syn{\mu \alpha . \tau\Nf}{type-level least fixed-point}
-    \syn{\tlam{\alpha}{\kappa}{\tau\Nf}}{type-level lambdas (type constructor)}
-\syng{\sigma\Ne, \tau\Ne}{neutral monotypes:}
-    \syn{\alpha}{type variables}
-    \syn{\sigma\Ne\;\tau\Nf}{type-level application}
-\end{align*}
-\begin{align*}
-\syng{A\Nf, B\Nf, C\Nf}{normal types:}
-    \syn{\sigma\Nf, \tau\Nf}{normal monotypes}
-    \syn{A\Ne, B\Ne, C\Ne}{neutral types}
-    \syn{\tall{\alpha}{\kappa}{A\Nf}}{universal quantification}
-\syng{A\Ne, B\Ne, C\Ne}{neutral types:}
-    \syn{\alpha}{type variables}
-    \syn{\tau\Ne\;A\Nf}{type-level application}
-\end{align*}
-
-% \subsubsection{Type-Level Reduction}
-
-% \boxed{A\ canon}
-% Type $A$ is in canonical form.
-% \\
-% \boxed{A \mapsto B}
-% Type $A$ can be reduced to type $B$
-
-% \small
-% \begin{mathpar}
-% \typeaxiom{TC-Var}{\alpha\ canon}
-
-% \typeaxiom{TC-ExstVar}{\hat{\alpha}\ canon}
-
-% \typeaxiom{TC-Bool}{\<bool>\ canon}
-
-% \typeaxiom{TC-Int}{\<int>\ canon}
-
-% \typerule{TC-Prod}{A_i\ canon\ (\mathrm{for\ all}\ i)}{\{A_i\}\ canon}
-
-% \typerule{TC-Sum}{A_i\ canon\ (\mathrm{for\ all}\ i)}{\langle A_i \rangle\ canon}
-
-% \typerule{TC-Arr}{A\ canon \\ B\ canon}{A \rarr B\ canon}
-
-% \typerule{TC-Fix}{A\ canon}{\mu \alpha . A\ canon}
-
-% \typerule{TC-Forall}{A\ canon}{\lambda (\alpha :: \kappa).A\ canon}
-
-% \typerule{TC-Lam}{A\ canon}{\lambda (\alpha :: \kappa).A\ canon}
-
-% \typeaxiom{TR-LamApp}{(\lambda (\alpha :: \kappa).A)\;B \mapsto [B/\alpha]A}
-
-% \typerule{TR-App}{A \mapsto A'}{A\;B \mapsto A'\;B}
-
-% \typerule{TR-Sum}{A_i \mapsto A'_i\ (\mathrm{for\ all}\ i)}{\langle\overline{A_i}\rangle \mapsto \langle\overline{A'_i}\rangle}
-
-% \typerule{TR-Prod}{A_i \mapsto A'_i\ (\mathrm{for\ all}\ i)}{\{\overline{A_i}\} \mapsto \{\overline{A'_i}\}}
-
-% \typerule{TR-Arr}{A \mapsto A' \\ B \mapsto B'}{A \rarr B \mapsto A' \rarr B'}
-
-% \typerule{TR-Forall}{A \mapsto A'}{\forall(\alpha :: \kappa).A \mapsto \forall(\alpha :: \kappa).A'}
-
-% \typerule{TR-Fix}{A \mapsto A'}{\mu \alpha . A \mapsto \mu \alpha . A'}
-% \end{mathpar}
-
-\subsection{Typing Rules}
-
-\boxed{\Gamma \vdash e \tsyn A}
-Under context $\Gamma$, $e$ synthesizes output type $A$
-\\
-\boxed{\Gamma \vdash e \tchk A}
-Under context $\Gamma$, $e$ checks against input type $A$
-\\
-\boxed{\Gamma \vdash \tapp{A}{e}{C}}
-Under context $\Gamma$, applying $e$ to a function of type $A$ synthesizes type $C$
-\small
-\begin{mathpar}
-\typerule{Syn-Var}{(x : A) \in \Gamma}{\Gamma \vdash x \tsyn A}
-
-\typerule{Syn-Chk}{\Gamma \vdash e \tsyn A}{\Gamma \vdash e \tchk A}
-
-\typeaxiom{Syn-Bool}{\Gamma \vdash \<true>, \<false> \tsyn \<bool>}
-
-\typeaxiom{Syn-Int}{\Gamma \vdash \dotso, -2, -1, 0, 1, 2, \dotso \tsyn \<int>}
-
-\typerule{Syn-Ann}{\Gamma \vdash e \tchk A}{\Gamma \vdash e : A \tsyn A}
-
-\typerule{Syn-ProdIntro}{\Gamma \vdash e_i \tsyn \tau_i\ (\mathrm{for\ all}\ i)}{\Gamma \vdash \{\overline{e_i}\} \tsyn \{\overline{\tau_i}\}}
-
-\typerule{Syn-ProdElim}{\Gamma \vdash e \tsyn \{\overline{\tau_i}\}}{\Gamma \vdash e.i \tsyn \tau_i}
-
-\typerule{Chk-SumIntro}{\Gamma \vdash e \tchk \tau_i}{\Gamma \vdash \langle i = e \rangle \tchk \langle \overline{\tau_i} \rangle}
-
-\typerule{Syn-SumElim}{
-    \Gamma \vdash e_1 \tsyn \langle \overline{\tau_i} \rangle \\    
-    \Gamma \vdash e_2 \tsyn \{\overline{\tau_i \rarr \sigma}\}}{
-    \Gamma \vdash \<case>\ e_1\ \<of>\ e_2 \tsyn \sigma
-}
-
-\typerule{Syn-MonoLam}{\Gamma, \hat{\alpha}, \hat{\beta}, x : \hat{\alpha} \vdash e \tchk \hat{\beta}}{\Gamma \vdash \lambda x.e \tsyn \hat{\alpha} \rarr \hat{\beta}}
-
-\typerule{Chk-PolyLam}{\Gamma, x : A \vdash e \tchk B}{\Gamma \vdash \lambda x.e \tchk A \rarr B}
-
-\typerule{Syn-PolyApp}{\Gamma, \hat{\alpha} \vdash \tapp{[\hat{\alpha}/\alpha]A}{e}{C}}{\Gamma \vdash \tapp{\forall \alpha.A}{e}{C}}
-
-\typerule{Syn-ExstApp}{\Gamma, \hat{\alpha}_1, \hat{\alpha}_2, \hat{\alpha} = \hat{\alpha}_1 \rarr \hat{\alpha}_2 \vdash e \tchk \hat{\alpha}_1}{\Gamma, \hat{\alpha} \vdash \tapp{\hat{\alpha}}{e}{\hat{\alpha}_2}}
-
-\typerule{Syn-MonoApp}{
-    \Gamma \vdash e_1 \tsyn A \\
-    \Gamma \vdash \tapp{A}{e}{C}}{
-    \Gamma \vdash e_1\;e_2 \tsyn C
-}
-
-\typerule{Syn-TermTypeApp}{\Gamma \vdash e \tsyn \forall \alpha.A}{\Gamma \vdash e[\tau] \tsyn [\tau/\alpha]A}
-\end{mathpar}
-
-Note that well-formedness of contexts, types, and kinds is implied in every typing rule.
-
-
 \section{References}
+
+\subsection{Acknowledements}
+
+Thanks to Brendan Zabarauskas and András Kovács, who have helped with many type
+    system details. Many thanks to Mark Barbone (aka MBones/mb64), who provided
+    a code sample of their bidirectionally typed (with unification) algorithm
+    for typechecking higher-rank System F (\cite{tychk-nbe}), and who also
+    noted some issues they had with \citetitle{Dunfield13:bidir}
+    (\cite{Dunfield13:bidir}).
+
+
+\subsection{References}
 
 \nocite{*}
 
