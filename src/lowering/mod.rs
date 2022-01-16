@@ -11,7 +11,7 @@
 use std::mem;
 
 use ariadne::{Label, ReportKind};
-use calypso_base::symbol::Symbol;
+use calypso_base::symbol::{Ident, Symbol};
 use hashbrown::HashMap;
 use index_vec::{index_vec, IndexVec};
 
@@ -20,7 +20,7 @@ use crate::diag::Diagnostic;
 use crate::error::TysResult;
 use crate::ir::{
     CodeUnit, DefnId, Expr, ExprKind, IrId, Item, ItemKind, LocalId, Node, OwnerNodes,
-    ParentedNode, Ty, TyKind,
+    ParentedNode, Path, Res, Ty, TyKind,
 };
 use crate::parse::Span;
 use crate::{ctxt::TyCtxt, parse::ast};
@@ -38,6 +38,8 @@ pub fn lower_code_unit<'tcx>(
         local_id_counter: LocalId::from_raw(0),
         defn_names: HashMap::new(),
         defn_id_to_span: IndexVec::new(),
+        expr_stack: vec![],
+        ty_stack: vec![],
     };
     lcx.lower_code_unit(decls)
 }
@@ -52,6 +54,10 @@ struct LoweringCtxt<'tcx> {
     // and such
     defn_names: HashMap<Symbol, DefnId>,
     defn_id_to_span: IndexVec<DefnId, Span>,
+    /// A stack of `forall`-binders that we're under at the moment.
+    /// `Vec<(IrId of forall, name of bound variable)>`
+    ty_stack: Vec<(IrId, Symbol)>,
+    expr_stack: Vec<Ident>,
 }
 
 impl<'tcx> LoweringCtxt<'tcx> {
@@ -70,6 +76,7 @@ impl<'tcx> LoweringCtxt<'tcx> {
         let kind = match decl.kind {
             ast::DeclKind::Defn(name, ty, expr) => {
                 if let Some(defn_id) = self.defn_names.get(&name.symbol) {
+                    // TODO(@ThePuzzlemaker: diag): this could be better
                     let ident_span = self
                         .owners
                         .get(*defn_id)
@@ -101,7 +108,6 @@ impl<'tcx> LoweringCtxt<'tcx> {
                 }
                 self.defn_id_to_span
                     .insert(self.current_owner_id, decl.span);
-                self.bump_local();
                 let ty = self.lower_ty(*ty)?;
                 let expr = self.lower_expr(*expr)?;
                 ident = name;
@@ -128,11 +134,43 @@ impl<'tcx> LoweringCtxt<'tcx> {
     }
 
     fn lower_ty(&mut self, ty: ast::Ty) -> TysResult<&'tcx Ty<'tcx>> {
-        // TODO
+        // N.B. Items are always ID 0, so this is fine and won't skip it.
+        // This may change in the future, and that means this will be a bit
+        // more complex.
+        self.bump_local();
+        let ir_id = self.current_id();
+        let kind = match ty.kind {
+            ast::TyKind::Unit => TyKind::Unit,
+            ast::TyKind::Var(var) => {
+                // We reverse here because we want the closest binder, not the
+                // furthest, and we push at the back.
+                if let Some((id, _)) = self.ty_stack.iter().rev().find(|(_, sym)| *sym == var) {
+                    TyKind::Path(Path {
+                        res: Res::TyVar(*id),
+                        span: ty.span,
+                        symbol: var,
+                    })
+                } else {
+                    todo!("resolution error")
+                }
+            }
+            ast::TyKind::Free(_) => todo!("Free types are not yet supported, sorry"),
+            ast::TyKind::Arrow(t1, t2) => {
+                let t1 = self.lower_ty(*t1)?;
+                let t2 = self.lower_ty(*t2)?;
+                TyKind::Arrow(t1, t2)
+            }
+            ast::TyKind::Forall(var, ty) => {
+                self.ty_stack.push((ir_id, var.symbol));
+                let ty = self.lower_ty(*ty)?;
+                self.ty_stack.pop();
+                TyKind::Forall(var, ty)
+            }
+        };
         Ok(&*self.arena.ty.alloc(Ty {
-            ir_id: self.current_id(),
-            span: calypso_base::span::Span::new_dummy().into(),
-            kind: TyKind::Err,
+            span: ty.span,
+            ir_id,
+            kind,
         }))
     }
 

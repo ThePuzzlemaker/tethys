@@ -233,7 +233,8 @@ pub enum Res {
     Err,
 }
 
-// No primitive types except unit at the moment, and that's represented elsewhere
+/// No primitive types except unit at the moment, and that's represented
+/// elsewhere
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PrimTy {}
 

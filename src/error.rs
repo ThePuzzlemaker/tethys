@@ -1,10 +1,9 @@
 use std::fmt::{Debug, Display};
 
-use chumsky::prelude::Simple;
 use color_eyre::eyre;
 use thiserror::Error;
 
-/// The Calypso error type.
+/// The error type used within Tethys.
 #[derive(Error, Debug)]
 pub enum TysError {
     /// IO errors
