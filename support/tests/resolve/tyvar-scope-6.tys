@@ -19,7 +19,7 @@ def foo
     = let id1 : forall 'b . 'b -> 'b
       = let id2 : 'b -> 'b = \x.x
       in id2
-    in let id12 : 'b -> 'b
+    in let id3 : 'b -> 'b
         = id1
-        in id12
+        in id3
   in id0
