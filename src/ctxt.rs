@@ -27,3 +27,9 @@ pub struct Interners<'tcx> {
     /// The arena that interned objects are allocated from.
     pub(crate) arenas: &'tcx Arenas<'tcx>,
 }
+
+impl<'tcx> Interners<'tcx> {
+    pub fn new(arenas: &'tcx Arenas<'tcx>) -> Self {
+        Self { arenas }
+    }
+}

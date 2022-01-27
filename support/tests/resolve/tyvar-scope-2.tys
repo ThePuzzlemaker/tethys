@@ -1,0 +1,20 @@
+# ---
+# desc: >
+#   Scope of outer forall type variables does not include higher-rank type
+#   variables
+# mode: diag
+# diags:
+# - kind: error
+#   message: cannot find type `'b` in this scope
+#   labels:
+#   - loc: 3:20
+#     message: not found in this scope
+# - kind: error
+#   message: cannot find type `'b` in this scope
+#   labels:
+#   - loc: 3:26
+#     message: not found in this scope
+def foo
+  : forall 'a . 'a -> (forall 'b . 'b -> 'a) -> 'a
+  = \a f. let id : 'b -> 'b
+    = \x.x in f a

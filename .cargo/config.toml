@@ -1,0 +1,3 @@
+[alias]
+# alias for running uitest
+uitest = "run --bin uitest --features uitest-deps"

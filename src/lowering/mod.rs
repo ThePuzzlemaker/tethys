@@ -7,11 +7,13 @@
 //! with typechecking/inference.
 //!
 //! A good place to start for this module is [`lower_code_unit`].
+//! // TODO(@ThePuzzlemaker: frame): this is not really lowering. make this
+//!   into its own resolution pass, and do elaboration/typechecking+lowering
 
 use std::mem;
 
 use ariadne::{Label, ReportKind};
-use calypso_base::symbol::{Ident, Symbol};
+use calypso_base::symbol::Symbol;
 use hashbrown::HashMap;
 use index_vec::{index_vec, IndexVec};
 
@@ -19,7 +21,7 @@ use crate::ctxt::IrArenas;
 use crate::diag::Diagnostic;
 use crate::error::TysResult;
 use crate::ir::{
-    CodeUnit, DefnId, Expr, ExprKind, IrId, Item, ItemKind, LocalId, Node, OwnerNodes,
+    CodeUnit, DefnId, DefnKind, Expr, ExprKind, IrId, Item, ItemKind, LocalId, Node, OwnerNodes,
     ParentedNode, Path, Res, Ty, TyKind,
 };
 use crate::parse::Span;
@@ -57,7 +59,9 @@ struct LoweringCtxt<'tcx> {
     /// A stack of `forall`-binders that we're under at the moment.
     /// `Vec<(IrId of forall, name of bound variable)>`
     ty_stack: Vec<(IrId, Symbol)>,
-    expr_stack: Vec<Ident>,
+    /// Similar to [`ty_stack`], just for expressions (i.e. `let`- and
+    /// lambda-binders)
+    expr_stack: Vec<(IrId, Symbol)>,
 }
 
 impl<'tcx> LoweringCtxt<'tcx> {
@@ -88,8 +92,7 @@ impl<'tcx> LoweringCtxt<'tcx> {
                     let span: Span = self.defn_id_to_span[*defn_id]
                         .with_hi(ident_span.hi())
                         .into();
-                    let report = Diagnostic::build(ReportKind::Error, (), span.lo() as usize);
-                    let report = report
+                    let report = Diagnostic::build(ReportKind::Error, (), span.lo() as usize)
                         .with_message(format!(
                             "the name `{}` is defined multiple times",
                             name.symbol
@@ -108,8 +111,10 @@ impl<'tcx> LoweringCtxt<'tcx> {
                 }
                 self.defn_id_to_span
                     .insert(self.current_owner_id, decl.span);
-                let ty = self.lower_ty(*ty)?;
+                let (ty, plus) = self.lower_ty(*ty)?;
+                self.ty_stack.extend(&plus);
                 let expr = self.lower_expr(*expr)?;
+                self.ty_stack.truncate(self.ty_stack.len() - plus.len());
                 ident = name;
                 ItemKind::Value(ty, expr)
             }
@@ -133,53 +138,138 @@ impl<'tcx> LoweringCtxt<'tcx> {
         Ok(item)
     }
 
-    fn lower_ty(&mut self, ty: ast::Ty) -> TysResult<&'tcx Ty<'tcx>> {
+    fn lower_ty(&mut self, ty: ast::Ty) -> TysResult<(&'tcx Ty<'tcx>, Vec<(IrId, Symbol)>)> {
+        fn inner<'tcx>(
+            lcx: &mut LoweringCtxt<'tcx>,
+            ty: ast::Ty,
+            is_outer_forall: bool,
+        ) -> TysResult<(&'tcx Ty<'tcx>, Vec<(IrId, Symbol)>)> {
+            // N.B. Items are always ID 0, so this is fine and won't skip it.
+            // This may change in the future, and that means this will be a bit
+            // more complex.
+            lcx.bump_local();
+            let mut plus = vec![];
+            let ir_id = lcx.current_id();
+            let kind = match ty.kind {
+                ast::TyKind::Unit => TyKind::Unit,
+                ast::TyKind::Var(var) => {
+                    // We reverse here because we want the closest binder, not the
+                    // furthest, and we push at the back.
+                    let res = if let Some((id, _)) =
+                        lcx.ty_stack.iter().rev().find(|(_, sym)| *sym == var)
+                    {
+                        Res::TyVar(*id)
+                    } else {
+                        let report =
+                            Diagnostic::build(ReportKind::Error, (), ty.span.lo() as usize)
+                                .with_message(format!("cannot find type `{}` in this scope", var))
+                                .with_label(
+                                    Label::new(ty.span).with_message("not found in this scope"),
+                                )
+                                .finish();
+                        let mut drcx = lcx.tcx.drcx.borrow_mut();
+                        drcx.report_syncd(report);
+                        drop(drcx);
+                        Res::Err
+                    };
+                    TyKind::Path(Path {
+                        res,
+                        span: ty.span,
+                        symbol: var,
+                    })
+                }
+                ast::TyKind::Free(_) => todo!("Free types are not yet supported, sorry"),
+                ast::TyKind::Arrow(t1, t2) => {
+                    let (t1, _) = inner(lcx, *t1, false)?;
+                    let (t2, _) = inner(lcx, *t2, false)?;
+                    TyKind::Arrow(t1, t2)
+                }
+                ast::TyKind::Forall(var, ty) => {
+                    lcx.ty_stack.push((ir_id, var.symbol));
+                    let (ty, plus2) = inner(lcx, *ty, true)?;
+                    plus.extend(plus2);
+                    if is_outer_forall {
+                        plus.push((ir_id, var.symbol));
+                    }
+                    lcx.ty_stack.pop();
+                    TyKind::Forall(var, ty)
+                }
+            };
+            Ok((
+                &*lcx.arena.ty.alloc(Ty {
+                    span: ty.span,
+                    ir_id,
+                    kind,
+                }),
+                plus,
+            ))
+        }
+        inner(self, ty, true)
+    }
+
+    fn lower_expr(&mut self, expr: ast::Expr) -> TysResult<&'tcx Expr<'tcx>> {
         // N.B. Items are always ID 0, so this is fine and won't skip it.
         // This may change in the future, and that means this will be a bit
         // more complex.
         self.bump_local();
         let ir_id = self.current_id();
-        let kind = match ty.kind {
-            ast::TyKind::Unit => TyKind::Unit,
-            ast::TyKind::Var(var) => {
+        let kind = match expr.kind {
+            ast::ExprKind::Unit => ExprKind::Unit,
+            ast::ExprKind::Var(var) => {
                 // We reverse here because we want the closest binder, not the
                 // furthest, and we push at the back.
-                if let Some((id, _)) = self.ty_stack.iter().rev().find(|(_, sym)| *sym == var) {
-                    TyKind::Path(Path {
-                        res: Res::TyVar(*id),
-                        span: ty.span,
-                        symbol: var,
-                    })
+                let res = if let Some((id, _)) =
+                    self.expr_stack.iter().rev().find(|(_, sym)| *sym == var)
+                {
+                    Res::Local(*id)
+                } else if let Some(defn) = self.defn_names.get(&var) {
+                    Res::Defn(DefnKind::Value, *defn)
                 } else {
-                    todo!("resolution error")
+                    let report = Diagnostic::build(ReportKind::Error, (), expr.span.lo() as usize)
+                        .with_message(format!("cannot find value `{}` in this scope", var))
+                        .with_label(Label::new(expr.span).with_message("not found in this scope"))
+                        .finish();
+                    let mut drcx = self.tcx.drcx.borrow_mut();
+                    drcx.report_syncd(report);
+                    drop(drcx);
+                    Res::Err
+                };
+                ExprKind::Path(Path {
+                    res,
+                    span: expr.span,
+                    symbol: var,
+                })
+            }
+            ast::ExprKind::Apply(f, x) => {
+                let f = self.lower_expr(*f)?;
+                let x = self.lower_expr(*x)?;
+                ExprKind::Apply(f, x)
+            }
+            ast::ExprKind::Lambda(var, body) => {
+                self.expr_stack.push((ir_id, var.symbol));
+                let body = self.lower_expr(*body)?;
+                self.expr_stack.pop();
+                ExprKind::Lambda(var, body)
+            }
+            ast::ExprKind::Let(var, ty, expr, inn) => {
+                let ty = ty.map(|x| self.lower_ty(*x)).transpose()?;
+                if let Some((_, plus)) = &ty {
+                    self.ty_stack.extend(plus);
                 }
-            }
-            ast::TyKind::Free(_) => todo!("Free types are not yet supported, sorry"),
-            ast::TyKind::Arrow(t1, t2) => {
-                let t1 = self.lower_ty(*t1)?;
-                let t2 = self.lower_ty(*t2)?;
-                TyKind::Arrow(t1, t2)
-            }
-            ast::TyKind::Forall(var, ty) => {
-                self.ty_stack.push((ir_id, var.symbol));
-                let ty = self.lower_ty(*ty)?;
-                self.ty_stack.pop();
-                TyKind::Forall(var, ty)
+                let expr = self.lower_expr(*expr)?;
+                if let Some((_, plus)) = &ty {
+                    self.ty_stack.truncate(self.ty_stack.len() - plus.len());
+                }
+                self.expr_stack.push((ir_id, var.symbol));
+                let inn = self.lower_expr(*inn)?;
+                self.expr_stack.pop();
+                ExprKind::Let(var, ty.map(|(ty, _)| ty), expr, inn)
             }
         };
-        Ok(&*self.arena.ty.alloc(Ty {
-            span: ty.span,
+        Ok(&*self.arena.expr.alloc(Expr {
+            span: expr.span,
             ir_id,
             kind,
-        }))
-    }
-
-    fn lower_expr(&mut self, expr: ast::Expr) -> TysResult<&'tcx Expr<'tcx>> {
-        // TODO
-        Ok(&*self.arena.expr.alloc(Expr {
-            ir_id: self.current_id(),
-            span: calypso_base::span::Span::new_dummy().into(),
-            kind: ExprKind::Err,
         }))
     }
 

@@ -1,6 +1,5 @@
 use std::fmt::{Debug, Display};
 
-use color_eyre::eyre;
 use thiserror::Error;
 
 /// The error type used within Tethys.

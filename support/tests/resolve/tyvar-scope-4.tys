@@ -1,0 +1,22 @@
+# ---
+# desc: >
+#   Scope of forall type variables does not escape multiple let-bindings
+# mode: diag
+# diags:
+# - kind: error
+#   message: cannot find type `'b` in this scope
+#   labels:
+#   - loc: 7:18
+#     message: not found in this scope
+# - kind: error
+#   message: cannot find type `'c` in this scope
+#   labels:
+#   - loc: 7:24
+#     message: not found in this scope
+def foo
+    : forall 'a . 'a -> 'a
+    = let id0 : forall 'b . 'b -> 'b
+        = \x.x
+    in let id1 : forall 'c . 'c -> 'c
+        = \x.x
+    in let id2 : 'b -> 'c = id0 in id2

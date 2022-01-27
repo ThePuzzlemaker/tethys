@@ -1,0 +1,9 @@
+# ---
+# desc: >
+#    Scope of outer forall type variables is preserved within the `def` body
+# mode: check-pass
+def foo
+  : forall 'a . 'a -> 'a
+  = let id : 'a -> 'a
+    = \x.x
+  in id
