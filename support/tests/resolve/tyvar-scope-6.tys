@@ -6,12 +6,12 @@
 # - kind: error
 #   message: cannot find type `'b` in this scope
 #   labels:
-#   - loc: 7:19
+#   - loc: 7:18
 #     message: not found in this scope
 # - kind: error
 #   message: cannot find type `'b` in this scope
 #   labels:
-#   - loc: 7:25
+#   - loc: 7:24
 #     message: not found in this scope
 def foo
   : forall 'a . 'a -> 'a
