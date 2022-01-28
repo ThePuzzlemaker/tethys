@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ['**', '!wip/**', '!dependabot/**']
+  pull_request:
+    branches: ['**', '!wip/**']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        rust: [stable, 1.56, nightly]
+      fail-fast: false
+    continue-on-error: ${{ matrix.rust == 'nightly' }}
+
+    runs-on: ubuntu-latest
+    name: ${{ matrix.rust }}-x86_64-unknown-linux-gnu
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      with:
+        submodules: false
+
+    - name: Setup caching
+      uses: actions/cache@v2
+      with:
+        path: |
+          ~/.cargo
+          ~/.rustup
+        key: rust-${{ matrix.rust }}-cache
+
+    - name: Install toolchain (${{ matrix.rust }})
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        override: true
+
+    - name: Build
+      run: cargo build --verbose --workspace --all-features --all-targets
+
+    - name: Run tests
+      run: cargo test --verbose --workspace --all-features
