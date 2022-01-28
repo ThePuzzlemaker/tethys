@@ -7,7 +7,7 @@
 [ci_badge]: https://img.shields.io/github/workflow/status/ThePuzzlemaker/Tethys/CI?style=flat-square
 [ci_link]: https://github.com/ThePuzzlemaker/Tethys/actions
 
-[license_badge]: https://img.shields.io/badge/license-MIT-blue?style=flat-square
+[license_badge]: https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square
 [license_link]: #license
 
 [calypso]: https://calypso-lang.github.io/
