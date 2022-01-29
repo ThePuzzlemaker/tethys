@@ -73,7 +73,7 @@ There is a semi-functional VSCode extension / TextMate grammar in [`support/high
 - `src/`: The glorious source code.
   - `bin/uitest/`: UI testing. WIP
   - `bin/tethys.rs`: The main binary.
-  - `ir/`: IR definition. At the moment this is really just a named AST.
+  - `ir/`: IR definition. At the moment this is really just a name-resolved AST.
   - `lowering/`: Lowering. This will soon be renamed to resolution, as it is just that.
   - `parse/`: Lexing and parsing.
   - `resolve/`: Old resolution. Not relevant any more, but kept at the moment while I'm working on the new resolution.
