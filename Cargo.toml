@@ -6,7 +6,7 @@ default-run = "tethys"
 
 [dependencies]
 typed-arena = "2.0.1"
-chumsky = "0.7.0"
+chumsky = "0.8.0"
 ariadne = "0.1.3"
 logos = "0.12.0"
 derive_more = "0.99.17"
