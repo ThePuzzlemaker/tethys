@@ -158,7 +158,9 @@ pub fn parser() -> impl Parser<Token, Vec<ast::Decl>, Error = Simple<Token, Span
             .map_with_span(|ident, span| Ty::new(TyKind::Free(ident.symbol), span))
             .or(just([Token::LParen, Token::RParen])
                 .map_with_span(|_, span| Ty::new(TyKind::Unit, span)))
-            .or(ty.clone().delimited_by(Token::LParen, Token::RParen))
+            .or(ty
+                .clone()
+                .delimited_by(just(Token::LParen), just(Token::RParen)))
             .or(tyvar.map_with_span(|ident, span| Ty::new(TyKind::Var(ident.symbol), span)));
 
         let arrow = primary
@@ -189,7 +191,9 @@ pub fn parser() -> impl Parser<Token, Vec<ast::Decl>, Error = Simple<Token, Span
             .map_with_span(|ident, span| Expr::new(ExprKind::Var(ident.symbol), span))
             .or(just([Token::LParen, Token::RParen])
                 .map_with_span(|_, span| Expr::new(ExprKind::Unit, span)))
-            .or(expr.clone().delimited_by(Token::LParen, Token::RParen));
+            .or(expr
+                .clone()
+                .delimited_by(just(Token::LParen), just(Token::RParen)));
 
         let appl = primary
             .clone()
