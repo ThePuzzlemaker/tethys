@@ -45,7 +45,7 @@ version = "0.8.23"
 optional = true
 
 [dependencies.clap]
-version = "3.1.6"
+version = "3.1.7"
 optional = true
 features = ["color", "derive"]
 
