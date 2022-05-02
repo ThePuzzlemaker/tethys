@@ -13,7 +13,7 @@ derive_more = "0.99.17"
 pretty = "0.11.3"
 hashbrown = "0.12.0"
 index_vec = "0.1.3"
-thiserror = "1.0.30"
+thiserror = "1.0.31"
 eyre = "0.6.8"
 
 [dependencies.calypso_base]
