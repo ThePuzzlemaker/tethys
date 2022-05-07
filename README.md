@@ -73,10 +73,9 @@ There is a semi-functional VSCode extension / TextMate grammar in [`support/high
 - `src/`: The glorious source code.
   - `bin/uitest/`: UI testing. WIP
   - `bin/tethys.rs`: The main binary.
-  - `ir/`: IR definition. At the moment this is really just a name-resolved AST.
-  - `lowering/`: Lowering. This will soon be renamed to resolution, as it is just that.
+  - `ast/`: AST definition. Name resolution data is stored elsewhere.
+  - `resolve/`: Name resolution.
   - `parse/`: Lexing and parsing.
-  - `resolve/`: Old resolution. Not relevant any more, but kept at the moment while I'm working on the new resolution.
 
 Many modules have doc comments, but some do not. However, much of the code is (usually) self-explanatory, and when not I try to add comments and doc comments. If you have trouble understanding something and are wondering what something does, let me know, and I'll try to explain it to you.
 
