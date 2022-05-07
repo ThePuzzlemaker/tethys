@@ -1,5 +1,4 @@
-pub mod ast;
-use std::iter;
+use std::{fmt, iter};
 
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::{prelude::*, Stream};
@@ -10,13 +9,21 @@ use calypso_base::{
     symbol::{special::EMPTY, Ident, Symbol},
 };
 
-use ast::{Decl, DeclKind, Expr, ExprKind, Ty, TyKind};
+use crate::ast::{Expr, ExprKind, Item, ItemKind, Ty, TyKind};
+
+use crate::ctxt::TyCtxt;
 
 pub type SyntaxError = Simple<Token, Span>;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Deref)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Deref)]
 #[repr(transparent)]
 pub struct Span(pub span::Span);
+
+impl fmt::Debug for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Span({}..{})", self.0.lo(), self.0.hi())
+    }
+}
 
 impl From<span::Span> for Span {
     fn from(sp: span::Span) -> Self {
@@ -86,18 +93,18 @@ pub enum Token {
     #[token("->")]
     Arrow,
 
-    #[regex("_[A-Za-z0-9_]+|[A-Za-z][A-Za-z0-9_]*", ident)]
+    #[regex("_[A-Za-z0-9_]+|[A-Za-z][A-Za-z0-9_]*", intern)]
     Ident(Symbol),
-    #[regex("'_[A-Za-z0-9_]+|'[A-Za-z][A-Za-z0-9_]*", ident)]
+    #[regex("'_[A-Za-z0-9_]+|'[A-Za-z][A-Za-z0-9_]*", intern)]
     TyVar(Symbol),
 
-    #[regex("#(.*)\n?", logos::skip)]
     #[regex("[ \t\r\n]+", logos::skip)]
+    #[regex("#(.*)\n?", logos::skip)]
     #[error]
     Error,
 }
 
-fn ident(lex: &mut Lexer<Token>) -> Symbol {
+fn intern(lex: &mut Lexer<Token>) -> Symbol {
     Symbol::intern(lex.slice())
 }
 
@@ -122,7 +129,9 @@ impl Token {
     }
 }
 
-pub fn parser() -> impl Parser<Token, Vec<ast::Decl>, Error = Simple<Token, Span>> + Clone {
+pub fn parser<'tcx>(
+    tcx: &'tcx TyCtxt<'tcx>,
+) -> impl Parser<Token, Vec<&'tcx crate::ast::Item<'tcx>>, Error = Simple<Token, Span>> + Clone {
     let ident = filter_map(|span: Span, tok| {
         if let Token::Ident(s) = tok {
             Ok(Ident {
@@ -153,22 +162,48 @@ pub fn parser() -> impl Parser<Token, Vec<ast::Decl>, Error = Simple<Token, Span
         }
     });
 
+    let ast_arena = &tcx.arenas.ast;
+
+    let ty_arena = &ast_arena.ty;
     let ty = recursive(|ty| {
         let primary = ident
-            .map_with_span(|ident, span| Ty::new(TyKind::Free(ident.symbol), span))
-            .or(just([Token::LParen, Token::RParen])
-                .map_with_span(|_, span| Ty::new(TyKind::Unit, span)))
+            .map_with_span(|ident, span| {
+                &*ty_arena.alloc(Ty {
+                    id: ast_arena.next_ast_id(),
+                    kind: TyKind::Name(ident),
+                    span,
+                })
+            })
+            .or(
+                just([Token::LParen, Token::RParen]).map_with_span(|_, span| {
+                    &*ty_arena.alloc(Ty {
+                        id: ast_arena.next_ast_id(),
+                        kind: TyKind::Unit,
+                        span,
+                    })
+                }),
+            )
             .or(ty
                 .clone()
                 .delimited_by(just(Token::LParen), just(Token::RParen)))
-            .or(tyvar.map_with_span(|ident, span| Ty::new(TyKind::Var(ident.symbol), span)));
+            .or(tyvar.map_with_span(|ident, span| {
+                &*ty_arena.alloc(Ty {
+                    id: ast_arena.next_ast_id(),
+                    kind: TyKind::Name(ident),
+                    span,
+                })
+            }));
 
         let arrow = primary
             .clone()
             .then(just(Token::Arrow).ignore_then(ty).repeated())
             .foldl(|lhs, rhs| {
                 let sp = lhs.span.with_hi(rhs.span.hi());
-                Ty::new(TyKind::Arrow(Box::new(lhs), Box::new(rhs)), sp.into())
+                &*ty_arena.alloc(Ty {
+                    id: ast_arena.next_ast_id(),
+                    kind: TyKind::Arrow(lhs, rhs),
+                    span: sp.into(),
+                })
             });
 
         let forall = just(Token::Forall)
@@ -179,18 +214,39 @@ pub fn parser() -> impl Parser<Token, Vec<ast::Decl>, Error = Simple<Token, Span
             .map(|((sp, vars), ty)| (vars, (sp, ty)))
             .foldr(|var, (sp, ty)| {
                 let sp = sp.with_hi(ty.span.hi()).into();
-                (sp, Ty::new(TyKind::Forall(var, Box::new(ty)), sp))
+                (
+                    sp,
+                    &*ty_arena.alloc(Ty {
+                        id: ast_arena.next_ast_id(),
+                        kind: TyKind::Forall(var, ty),
+                        span: sp,
+                    }),
+                )
             })
             .map(|(_, ty)| ty);
 
         forall.or(arrow)
     });
 
+    let expr_arena = &ast_arena.expr;
     let expr = recursive(|expr| {
         let primary = ident
-            .map_with_span(|ident, span| Expr::new(ExprKind::Var(ident.symbol), span))
-            .or(just([Token::LParen, Token::RParen])
-                .map_with_span(|_, span| Expr::new(ExprKind::Unit, span)))
+            .map_with_span(|ident, span| {
+                &*expr_arena.alloc(Expr {
+                    id: ast_arena.next_ast_id(),
+                    kind: ExprKind::Name(ident),
+                    span,
+                })
+            })
+            .or(
+                just([Token::LParen, Token::RParen]).map_with_span(|_, span| {
+                    &*expr_arena.alloc(Expr {
+                        id: ast_arena.next_ast_id(),
+                        kind: ExprKind::Unit,
+                        span,
+                    })
+                }),
+            )
             .or(expr
                 .clone()
                 .delimited_by(just(Token::LParen), just(Token::RParen)));
@@ -201,7 +257,11 @@ pub fn parser() -> impl Parser<Token, Vec<ast::Decl>, Error = Simple<Token, Span
             .map(|(lhs, rhs)| (rhs.into_iter().rev(), lhs))
             .foldr(|rhs, lhs| {
                 let sp = lhs.span.with_hi(rhs.span.hi());
-                Expr::new(ExprKind::Apply(Box::new(lhs), Box::new(rhs)), sp.into())
+                &*expr_arena.alloc(Expr {
+                    id: ast_arena.next_ast_id(),
+                    kind: ExprKind::Apply(lhs, rhs),
+                    span: sp.into(),
+                })
             });
 
         let lambda = just(Token::Backslash)
@@ -212,7 +272,14 @@ pub fn parser() -> impl Parser<Token, Vec<ast::Decl>, Error = Simple<Token, Span
             .map(|((sp, vars), expr)| (vars, (sp, expr)))
             .foldr(|var, (sp, expr)| {
                 let sp = sp.with_hi(expr.span.hi()).into();
-                (sp, Expr::new(ExprKind::Lambda(var, Box::new(expr)), sp))
+                (
+                    sp,
+                    &*expr_arena.alloc(Expr {
+                        id: ast_arena.next_ast_id(),
+                        kind: ExprKind::Lambda(var, expr),
+                        span: sp,
+                    }),
+                )
             })
             .map(|(_, expr)| expr)
             .or(appl.clone());
@@ -227,15 +294,17 @@ pub fn parser() -> impl Parser<Token, Vec<ast::Decl>, Error = Simple<Token, Span
             .then(expr)
             .map(|((((sp, ident), ty), expr), inn)| {
                 let sp = sp.with_hi(inn.span.hi()).into();
-                Expr::new(
-                    ExprKind::Let(ident, ty.map(Box::new), Box::new(expr), Box::new(inn)),
-                    sp,
-                )
+                &*expr_arena.alloc(Expr {
+                    id: ast_arena.next_ast_id(),
+                    kind: ExprKind::Let(ident, ty, expr, inn),
+                    span: sp,
+                })
             })
             .or(lambda)
     });
 
-    let decl = just(Token::Def)
+    let item_arena = &ast_arena.item;
+    let item = just(Token::Def)
         .map_with_span(|_, span| span)
         .then(ident)
         .then_ignore(just(Token::Colon))
@@ -247,16 +316,21 @@ pub fn parser() -> impl Parser<Token, Vec<ast::Decl>, Error = Simple<Token, Span
             vec.into_iter()
                 .map(|(((sp, name), ty), expr)| {
                     let sp = sp.with_hi(expr.span.hi()).into();
-                    Decl::new(DeclKind::Defn(name, Box::new(ty), Box::new(expr)), sp)
+                    &*item_arena.alloc(Item {
+                        id: ast_arena.next_ast_id(),
+                        ident: name,
+                        kind: ItemKind::Value(ty, expr),
+                        span: sp,
+                    })
                 })
                 .collect::<Vec<_>>()
         });
 
-    decl.then_ignore(end())
+    item.then_ignore(end())
 }
 
 // TODO(@ThePuzzlemaker: diag): actually use DRCX for this
-pub fn run(src: &str) -> Vec<Decl> {
+pub fn run<'tcx>(src: &str, tcx: &'tcx TyCtxt<'tcx>) -> Vec<&'tcx Item<'tcx>> {
     let lex = Token::lexer(src).spanned().map(|(x, sp)| {
         (
             x,
@@ -265,7 +339,7 @@ pub fn run(src: &str) -> Vec<Decl> {
     });
     let srclen = src.len().try_into().unwrap();
     let stream = Stream::from_iter(Span(span::Span::new(srclen, srclen + 1)), lex);
-    let (decls, parse_errs) = parser().parse_recovery(stream);
+    let (decls, parse_errs) = parser(tcx).parse_recovery(stream);
 
     parse_errs
         .into_iter()
@@ -337,5 +411,5 @@ pub fn run(src: &str) -> Vec<Decl> {
 
             report.finish().print(Source::from(&src)).unwrap();
         });
-    decls.unwrap_or_else(Vec::new)
+    decls.unwrap_or_default()
 }

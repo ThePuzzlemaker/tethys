@@ -6,13 +6,12 @@ use error::TysResult;
 
 use crate::{ctxt::Arenas, diag::DiagReportCtxt};
 
+pub mod ast;
 pub mod ctxt;
 pub mod diag;
 pub mod error;
 pub mod infer;
 pub mod intern;
-pub mod ir;
-pub mod lowering;
 pub mod parse;
 pub mod resolve;
 
@@ -25,9 +24,10 @@ pub fn get_tcx<'tcx>(arenas: &'tcx Arenas<'tcx>) -> TyCtxt<'tcx> {
 }
 
 pub fn run<'tcx>(src: &str, tcx: &'tcx TyCtxt<'tcx>, suppress_output: bool) -> TysResult<()> {
-    let decls = parse::run(src);
+    let items = parse::run(src, tcx);
 
-    let cu = lowering::lower_code_unit(tcx, decls)?;
+    let _rd = resolve::resolve_code_unit(tcx, &items)?;
+    // let cu = lowering::lower_code_unit(tcx, decls)?;
 
     if !suppress_output {
         let drcx = tcx.drcx.borrow();
@@ -39,7 +39,7 @@ pub fn run<'tcx>(src: &str, tcx: &'tcx TyCtxt<'tcx>, suppress_output: bool) -> T
             fatal.eprint(Source::from(&src))?;
         }
 
-        println!("{:#?}", cu);
+        println!("{:?}", items);
     }
 
     Ok(())
