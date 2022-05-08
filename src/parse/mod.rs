@@ -162,48 +162,22 @@ pub fn parser<'tcx>(
         }
     });
 
-    let ast_arena = &tcx.arenas.ast;
-
-    let ty_arena = &ast_arena.ty;
     let ty = recursive(|ty| {
         let primary = ident
-            .map_with_span(|ident, span| {
-                &*ty_arena.alloc(Ty {
-                    id: ast_arena.next_ast_id(),
-                    kind: TyKind::Name(ident),
-                    span,
-                })
-            })
-            .or(
-                just([Token::LParen, Token::RParen]).map_with_span(|_, span| {
-                    &*ty_arena.alloc(Ty {
-                        id: ast_arena.next_ast_id(),
-                        kind: TyKind::Unit,
-                        span,
-                    })
-                }),
-            )
+            .map_with_span(|ident, span| Ty::new(tcx, TyKind::Name(ident), span))
+            .or(just([Token::LParen, Token::RParen])
+                .map_with_span(|_, span| Ty::new(tcx, TyKind::Unit, span)))
             .or(ty
                 .clone()
                 .delimited_by(just(Token::LParen), just(Token::RParen)))
-            .or(tyvar.map_with_span(|ident, span| {
-                &*ty_arena.alloc(Ty {
-                    id: ast_arena.next_ast_id(),
-                    kind: TyKind::Name(ident),
-                    span,
-                })
-            }));
+            .or(tyvar.map_with_span(|ident, span| Ty::new(tcx, TyKind::Name(ident), span)));
 
         let arrow = primary
             .clone()
             .then(just(Token::Arrow).ignore_then(ty).repeated())
             .foldl(|lhs, rhs| {
                 let sp = lhs.span.with_hi(rhs.span.hi());
-                &*ty_arena.alloc(Ty {
-                    id: ast_arena.next_ast_id(),
-                    kind: TyKind::Arrow(lhs, rhs),
-                    span: sp.into(),
-                })
+                Ty::new(tcx, TyKind::Arrow(lhs, rhs), sp.into())
             });
 
         let forall = just(Token::Forall)
@@ -214,39 +188,18 @@ pub fn parser<'tcx>(
             .map(|((sp, vars), ty)| (vars, (sp, ty)))
             .foldr(|var, (sp, ty)| {
                 let sp = sp.with_hi(ty.span.hi()).into();
-                (
-                    sp,
-                    &*ty_arena.alloc(Ty {
-                        id: ast_arena.next_ast_id(),
-                        kind: TyKind::Forall(var, ty),
-                        span: sp,
-                    }),
-                )
+                (sp, Ty::new(tcx, TyKind::Forall(var, ty), sp))
             })
             .map(|(_, ty)| ty);
 
         forall.or(arrow)
     });
 
-    let expr_arena = &ast_arena.expr;
     let expr = recursive(|expr| {
         let primary = ident
-            .map_with_span(|ident, span| {
-                &*expr_arena.alloc(Expr {
-                    id: ast_arena.next_ast_id(),
-                    kind: ExprKind::Name(ident),
-                    span,
-                })
-            })
-            .or(
-                just([Token::LParen, Token::RParen]).map_with_span(|_, span| {
-                    &*expr_arena.alloc(Expr {
-                        id: ast_arena.next_ast_id(),
-                        kind: ExprKind::Unit,
-                        span,
-                    })
-                }),
-            )
+            .map_with_span(|ident, span| Expr::new(tcx, ExprKind::Name(ident), span))
+            .or(just([Token::LParen, Token::RParen])
+                .map_with_span(|_, span| Expr::new(tcx, ExprKind::Unit, span)))
             .or(expr
                 .clone()
                 .delimited_by(just(Token::LParen), just(Token::RParen)));
@@ -257,11 +210,7 @@ pub fn parser<'tcx>(
             .map(|(lhs, rhs)| (rhs.into_iter().rev(), lhs))
             .foldr(|rhs, lhs| {
                 let sp = lhs.span.with_hi(rhs.span.hi());
-                &*expr_arena.alloc(Expr {
-                    id: ast_arena.next_ast_id(),
-                    kind: ExprKind::Apply(lhs, rhs),
-                    span: sp.into(),
-                })
+                Expr::new(tcx, ExprKind::Apply(lhs, rhs), sp.into())
             });
 
         let lambda = just(Token::Backslash)
@@ -272,14 +221,7 @@ pub fn parser<'tcx>(
             .map(|((sp, vars), expr)| (vars, (sp, expr)))
             .foldr(|var, (sp, expr)| {
                 let sp = sp.with_hi(expr.span.hi()).into();
-                (
-                    sp,
-                    &*expr_arena.alloc(Expr {
-                        id: ast_arena.next_ast_id(),
-                        kind: ExprKind::Lambda(var, expr),
-                        span: sp,
-                    }),
-                )
+                (sp, Expr::new(tcx, ExprKind::Lambda(var, expr), sp))
             })
             .map(|(_, expr)| expr)
             .or(appl.clone());
@@ -294,16 +236,11 @@ pub fn parser<'tcx>(
             .then(expr)
             .map(|((((sp, ident), ty), expr), inn)| {
                 let sp = sp.with_hi(inn.span.hi()).into();
-                &*expr_arena.alloc(Expr {
-                    id: ast_arena.next_ast_id(),
-                    kind: ExprKind::Let(ident, ty, expr, inn),
-                    span: sp,
-                })
+                Expr::new(tcx, ExprKind::Let(ident, ty, expr, inn), sp)
             })
             .or(lambda)
     });
 
-    let item_arena = &ast_arena.item;
     let item = just(Token::Def)
         .map_with_span(|_, span| span)
         .then(ident)
@@ -316,12 +253,7 @@ pub fn parser<'tcx>(
             vec.into_iter()
                 .map(|(((sp, name), ty), expr)| {
                     let sp = sp.with_hi(expr.span.hi()).into();
-                    &*item_arena.alloc(Item {
-                        id: ast_arena.next_ast_id(),
-                        ident: name,
-                        kind: ItemKind::Value(ty, expr),
-                        span: sp,
-                    })
+                    Item::new(tcx, name, ItemKind::Value(ty, expr), sp)
                 })
                 .collect::<Vec<_>>()
         });

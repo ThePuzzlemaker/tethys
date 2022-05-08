@@ -8,7 +8,7 @@
 
 use ariadne::{Label, ReportKind};
 use calypso_base::symbol::Symbol;
-use hashbrown::HashMap;
+use std::collections::HashMap;
 
 use crate::{
     ast::{AstId, DefnKind, Expr, ExprKind, Item, ItemKind, Res, Ty, TyKind},
@@ -17,6 +17,46 @@ use crate::{
     error::TysResult,
     parse::Span,
 };
+
+#[derive(Debug, Default)]
+pub struct ResolutionData {
+    ast_id_to_res_idx: HashMap<AstId, usize>,
+    res_data: Vec<Res>,
+}
+
+impl ResolutionData {
+    pub fn clear(&mut self) {
+        self.ast_id_to_res_idx.clear();
+        self.res_data.clear();
+    }
+
+    pub(crate) fn insert(&mut self, id: AstId, res: Res) {
+        let idx = self
+            .res_data
+            .iter()
+            .enumerate()
+            .find_map(|(idx, res1)| (res1 == &res).then(|| idx))
+            .unwrap_or_else(|| {
+                let idx = self.res_data.len();
+                self.res_data.push(res);
+                idx
+            });
+        self.ast_id_to_res_idx.insert(id, idx);
+    }
+
+    pub fn get_by_id(&'_ self, id: AstId) -> Option<&'_ Res> {
+        self.ast_id_to_res_idx
+            .get(&id)
+            .and_then(|idx| self.res_data.get(*idx))
+    }
+
+    pub fn to_hash_map(&'_ self) -> HashMap<AstId, &'_ Res> {
+        self.ast_id_to_res_idx
+            .iter()
+            .flat_map(|(&id, &idx)| Some((id, self.res_data.get(idx)?)))
+            .collect()
+    }
+}
 
 pub fn resolve_code_unit<'tcx>(
     tcx: &'tcx TyCtxt<'tcx>,
@@ -32,7 +72,6 @@ pub fn resolve_code_unit<'tcx>(
         expr_stack: vec![],
     };
     rcx.lower_code_unit(items)?;
-    // todo!("resolution data")
     Ok(())
 }
 
@@ -134,7 +173,7 @@ impl<'tcx> ResolutionCtxt<'tcx> {
                         drop(drcx);
                         Res::Err
                     };
-                    // TODO: give res to resolve data
+                    rcx.arena.res_data.borrow_mut().insert(ty.id, res);
                 }
                 TyKind::Arrow(t1, t2) => {
                     let _ = inner(rcx, t1, false)?;
@@ -181,7 +220,7 @@ impl<'tcx> ResolutionCtxt<'tcx> {
                     drop(drcx);
                     Res::Err
                 };
-                // TODO: insert Res into resolve data
+                self.arena.res_data.borrow_mut().insert(expr.id, res);
             }
             ExprKind::Apply(f, x) => {
                 self.lower_expr(f)?;
@@ -217,6 +256,3 @@ impl<'tcx> ResolutionCtxt<'tcx> {
         self.expr_stack.clear();
     }
 }
-
-#[derive(Debug)]
-pub struct ResolutionData {}

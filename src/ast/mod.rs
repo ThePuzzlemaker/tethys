@@ -1,6 +1,6 @@
 //! This module implements Tethys's AST.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, ptr};
 
 use calypso_base::symbol::Ident;
 
@@ -158,6 +158,15 @@ pub enum Res {
     Err,
 }
 
+impl Res {
+    pub fn id(self) -> Option<AstId> {
+        match self {
+            Res::PrimTy(_) | Res::Err => None,
+            Res::Defn(_, id) | Res::Local(id) | Res::TyVar(id) => Some(id),
+        }
+    }
+}
+
 /// No primitive types except unit at the moment, and that's represented
 /// elsewhere
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -175,6 +184,19 @@ pub enum Node<'ast> {
     Ty(&'ast Ty<'ast>),
 }
 
+impl<'ast> PartialEq<Node<'ast>> for Node<'ast> {
+    fn eq(&self, other: &Node<'ast>) -> bool {
+        match (self, other) {
+            (Self::Item(l0), Self::Item(r0)) => ptr::eq(*l0, *r0),
+            (Self::Expr(l0), Self::Expr(r0)) => ptr::eq(*l0, *r0),
+            (Self::Ty(l0), Self::Ty(r0)) => ptr::eq(*l0, *r0),
+            _ => false,
+        }
+    }
+}
+
+impl<'ast> Eq for Node<'ast> {}
+
 impl<'ast> Node<'ast> {
     pub fn span(self) -> Span {
         *match self {
@@ -187,7 +209,16 @@ impl<'ast> Node<'ast> {
     pub fn ident(self) -> Option<Ident> {
         match self {
             Self::Item(Item { ident, .. }) => Some(*ident),
-            _ => None,
+            Self::Expr(Expr { kind, .. }) => match kind {
+                ExprKind::Unit | ExprKind::Apply(_, _) | ExprKind::Err => None,
+                ExprKind::Name(ident)
+                | ExprKind::Lambda(ident, _)
+                | ExprKind::Let(ident, _, _, _) => Some(*ident),
+            },
+            Self::Ty(Ty { kind, .. }) => match kind {
+                TyKind::Unit | TyKind::Arrow(_, _) | TyKind::Err => None,
+                TyKind::Name(ident) | TyKind::Forall(ident, _) => Some(*ident),
+            },
         }
     }
 

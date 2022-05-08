@@ -11,7 +11,6 @@ pub mod ctxt;
 pub mod diag;
 pub mod error;
 pub mod infer;
-pub mod intern;
 pub mod parse;
 pub mod resolve;
 
@@ -39,7 +38,8 @@ pub fn run<'tcx>(src: &str, tcx: &'tcx TyCtxt<'tcx>, suppress_output: bool) -> T
             fatal.eprint(Source::from(&src))?;
         }
 
-        println!("{:?}", items);
+        println!("{:#?}", items);
+        println!("{:#?}", tcx.arenas.ast.res_data.borrow().to_hash_map());
     }
 
     Ok(())
