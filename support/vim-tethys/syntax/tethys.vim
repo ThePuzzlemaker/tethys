@@ -7,19 +7,38 @@ if exists("b:current_syntax")
   finish
 endif
 
-syn keyword tethysKeyword  def if else
-syn keyword tethysFunction map
+syn match   tethysComment "\v#.*$"
 
-syn match tethysComment  "\v#.*$"
-syn match tethysOperator "\\"
-syn match tethysOperator "\."
-syn match tethysOperator ":"
-syn match tethysOperator "="
-syn match tethysOperator "\(forall\>\|->\)"
+syn region  tethysString start=+"+ end=+"+ skip=+\\\\\|\\"+ contains=@Spell
+syn match   tethysNumber "\<\d\+\>"                           " integer
+syn match   tethysNumber "\<\d\+\.\d*\%([eE][-+]\=\d\+\)\=\>" " float, with dot, optional exp
+syn match   tethysNumber "\.\d\+\%([eE][-+]\=\d\+\)\=\>"      " float, starts with a dot, optional exp
+syn match   tethysNumber "\<\d\+[eE][-+]\=\d\+\>"             " float, without dot, with exp
 
-hi link tethysKeyword  Keyword
-hi link tethysFunction Function
-hi link tethysComment  Comment
-hi link tethysOperator Operator
+syn keyword tethysFunction println map rangeI divides intToString
+syn match   tethysFunction "\h\w*" display contained
+
+syn keyword tethysStatement   def nextgroup=tethysFunction skipwhite
+syn keyword tethysConditional if then else
+syn keyword tethysRepeat      each
+syn match   tethysOperator    "\\"
+syn match   tethysOperator    "\."
+syn match   tethysOperator    ":"
+syn match   tethysOperator    "="
+syn match   tethysOperator    "\(forall\>\|->\)"
+
+syn match   tethysType "()"
+syn keyword tethysType Int List String
+
+hi link tethysComment     Comment
+hi link tethysString      String
+hi link tethysNumber      Number
+hi link tethysFunction    Function
+hi link tethysStatement   Statement
+hi link tethysConditional Conditional
+hi link tethysRepeat      Repeat
+hi link tethysOperator    Operator
+hi link tethysKeyword     Keyword
+hi link tethysType        Type
 
 let b:current_syntax = "tethys"
