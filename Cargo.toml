@@ -42,7 +42,7 @@ optional = true
 features = ["derive"]
 
 [dependencies.serde_yaml]
-version = "0.8.24"
+version = "0.8.25"
 optional = true
 
 [dependencies.clap]
