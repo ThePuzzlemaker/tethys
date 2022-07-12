@@ -24,7 +24,7 @@ default-features = false
 features = ["span", "symbol"]
 
 [dependencies.color-eyre]
-version = "0.6.1"
+version = "0.6.2"
 optional = true
 
 [dependencies.tracing-subscriber]
