@@ -3,6 +3,7 @@ name = "tethys"
 version = "0.1.0"
 edition = "2021"
 default-run = "tethys"
+rust-version = "1.59.0"
 
 [dependencies]
 typed-arena = "2.0.1"
