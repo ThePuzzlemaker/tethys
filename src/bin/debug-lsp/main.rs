@@ -5,7 +5,7 @@ use calypso_base::symbol::Ident;
 use color_eyre::eyre;
 
 use tethys::ast::{AstId, Node};
-use tethys::ctxt::{Arenas, TyCtxt};
+use tethys::ctxt::TyCtxt;
 use tethys::parse::Span;
 use tethys::{parse, resolve};
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -266,6 +266,12 @@ fn position_of(offset: u32, src: &str) -> Position {
             cur_col += 1;
         }
     }
+    if offset >= src.len() as u32 {
+        return Position {
+            line: cur_line,
+            character: cur_col,
+        };
+    }
     Position {
         line: 0,
         character: 0,
@@ -313,8 +319,7 @@ fn worker_thread(
     mut rx: Receiver<Request>,
     tx: Sender<Result<Response>>,
 ) {
-    let arenas = Arenas::default();
-    let tcx = tethys::get_tcx(&arenas);
+    let tcx = TyCtxt::new();
     let mut items = Vec::new();
     while let Some(req) = rx.blocking_recv() {
         match req {
@@ -332,8 +337,9 @@ fn worker_thread(
             }
             Request::GetAstId(offset) => match get_node(&tcx, offset) {
                 Some(node) => {
-                    debug!("GetAstId({:?}): {:?}", offset, node.id());
-                    tx.blocking_send(Ok(Response::AstId(node.id()))).unwrap();
+                    let id = node.id(&tcx);
+                    debug!("GetAstId({:?}): {:?}", offset, id);
+                    tx.blocking_send(Ok(Response::AstId(id))).unwrap();
                 }
                 None => {
                     debug!("GetAstId({:?}): none found", offset);
@@ -345,8 +351,9 @@ fn worker_thread(
             },
             Request::GetActualSpan(offset) => match get_node(&tcx, offset) {
                 Some(node) => {
-                    debug!("GetActualSpan({:?}): {:?}", offset, node.span());
-                    tx.blocking_send(Ok(Response::Span(node.span()))).unwrap();
+                    let span = node.span(&tcx);
+                    debug!("GetActualSpan({:?}): {:?}", offset, span);
+                    tx.blocking_send(Ok(Response::Span(span))).unwrap();
                 }
                 None => {
                     debug!("GetActualSpan({:?}): none found", offset);
@@ -376,8 +383,9 @@ fn worker_thread(
             }
             Request::GetSpanOf(ast_id) => {
                 if let Some(node) = tcx.arenas.ast.get_node_by_id(ast_id) {
-                    debug!("GetSpanOf({:?}): {:?}", ast_id, node.span());
-                    tx.blocking_send(Ok(Response::Span(node.span()))).unwrap();
+                    let span = node.span(&tcx);
+                    debug!("GetSpanOf({:?}): {:?}", ast_id, span);
+                    tx.blocking_send(Ok(Response::Span(span))).unwrap();
                 } else {
                     debug!("GetSpanOf({:?}): none found", ast_id);
                     tx.blocking_send(Err(stringify_error(
@@ -388,8 +396,9 @@ fn worker_thread(
             }
             Request::GetIdent(ast_id) => {
                 if let Some(node) = tcx.arenas.ast.get_node_by_id(ast_id) {
-                    debug!("GetSymbol({:?}): {:?}", ast_id, node.ident());
-                    let res = match node.ident() {
+                    let ident = node.ident(&tcx);
+                    debug!("GetSymbol({:?}): {:?}", ast_id, ident);
+                    let res = match ident {
                         Some(ident) => Ok(Response::Ident(ident)),
                         None => Err(stringify_error(
                             "Failed to find a symbol for the given AST ID",
@@ -409,12 +418,16 @@ fn worker_thread(
 }
 
 /// Find the node with the smallest span that includes a given binary offset.
-fn get_node<'tcx>(tcx: &'tcx TyCtxt<'tcx>, offset: u32) -> Option<Node<'tcx>> {
+fn get_node(tcx: &TyCtxt, offset: u32) -> Option<Node> {
     tcx.arenas
         .ast
         .into_iter_nodes()
-        .filter(|node| node.span().lo() <= offset && offset <= node.span().hi())
-        .min_by_key(|node| node.span().len())
+        .filter(|node| {
+            let span = node.span(tcx);
+
+            span.lo() <= offset && offset <= span.hi()
+        })
+        .min_by_key(|node| node.span(tcx).len())
 }
 
 fn stringify_error<E: Display>(e: E) -> LspError {

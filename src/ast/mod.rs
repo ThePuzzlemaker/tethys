@@ -1,8 +1,9 @@
 //! This module implements Tethys's AST.
 
-use std::{borrow::Cow, ptr};
+use std::borrow::Cow;
 
 use calypso_base::symbol::Ident;
+use id_arena::Id;
 
 use crate::{ctxt::TyCtxt, parse::Span};
 
@@ -17,105 +18,95 @@ index_vec::define_index_type! {
     IMPL_RAW_CONVERSIONS = true;
 }
 
-#[derive(Debug)]
-pub struct Item<'ast> {
+#[derive(Copy, Clone, Debug)]
+pub struct Item {
     pub id: AstId,
     pub ident: Ident,
-    pub kind: ItemKind<'ast>,
+    pub kind: ItemKind,
     pub span: Span,
 }
 
-impl<'ast> Item<'ast> {
-    pub fn new(
-        tcx: &'ast TyCtxt<'ast>,
-        ident: Ident,
-        kind: ItemKind<'ast>,
-        span: Span,
-    ) -> &'ast Item<'ast> {
-        let item = tcx.arenas.ast.item.alloc(Item {
-            id: tcx.arenas.ast.next_ast_id(),
+impl Item {
+    pub fn new(tcx: &TyCtxt, ident: Ident, kind: ItemKind, span: Span) -> Id<Item> {
+        let id = tcx.arenas.ast.next_ast_id();
+        let item = tcx.arenas.ast.item.borrow_mut().alloc(Item {
+            id,
             kind,
             ident,
             span,
         });
-        tcx.arenas.ast.insert_node(item.id, Node::Item(item));
+        tcx.arenas.ast.insert_node(id, Node::Item(item));
         item
     }
 }
 
-#[derive(Debug)]
-pub enum ItemKind<'ast> {
+#[derive(Copy, Clone, Debug)]
+pub enum ItemKind {
     /// A value definition, as defined by `def`.
-    Value(&'ast Ty<'ast>, &'ast Expr<'ast>),
+    Value(Id<Ty>, Id<Expr>),
 }
 
-#[derive(Debug)]
-pub struct Expr<'ast> {
+#[derive(Copy, Clone, Debug)]
+pub struct Expr {
     pub id: AstId,
-    pub kind: ExprKind<'ast>,
+    pub kind: ExprKind,
     pub span: Span,
 }
 
-impl<'ast> Expr<'ast> {
-    pub fn new(tcx: &'ast TyCtxt<'ast>, kind: ExprKind<'ast>, span: Span) -> &'ast Expr<'ast> {
-        let expr = tcx.arenas.ast.expr.alloc(Expr {
-            id: tcx.arenas.ast.next_ast_id(),
-            kind,
-            span,
-        });
-        tcx.arenas.ast.insert_node(expr.id, Node::Expr(expr));
+impl Expr {
+    pub fn new(tcx: &TyCtxt, kind: ExprKind, span: Span) -> Id<Expr> {
+        let id = tcx.arenas.ast.next_ast_id();
+        let expr = tcx
+            .arenas
+            .ast
+            .expr
+            .borrow_mut()
+            .alloc(Expr { id, kind, span });
+        tcx.arenas.ast.insert_node(id, Node::Expr(expr));
         expr
     }
 }
 
-#[derive(Debug)]
-pub enum ExprKind<'ast> {
+#[derive(Copy, Clone, Debug)]
+pub enum ExprKind {
     Unit,
     Name(Ident),
-    Apply(&'ast Expr<'ast>, &'ast Expr<'ast>),
-    Lambda(Ident, &'ast Expr<'ast>),
-    Let(
-        Ident,
-        Option<&'ast Ty<'ast>>,
-        &'ast Expr<'ast>,
-        &'ast Expr<'ast>,
-    ),
+    Apply(Id<Expr>, Id<Expr>),
+    Lambda(Ident, Id<Expr>),
+    Let(Ident, Option<Id<Ty>>, Id<Expr>, Id<Expr>),
     /// A placeholder for an expression that was not syntactically well-formed.
     Err,
 }
 
-#[derive(Debug)]
-pub struct Ty<'ast> {
+#[derive(Copy, Clone, Debug)]
+pub struct Ty {
     pub id: AstId,
-    pub kind: TyKind<'ast>,
+    pub kind: TyKind,
     pub span: Span,
 }
 
-impl<'ast> Ty<'ast> {
-    pub fn new(tcx: &'ast TyCtxt<'ast>, kind: TyKind<'ast>, span: Span) -> &'ast Ty<'ast> {
-        let ty = tcx.arenas.ast.ty.alloc(Ty {
-            id: tcx.arenas.ast.next_ast_id(),
-            kind,
-            span,
-        });
-        tcx.arenas.ast.insert_node(ty.id, Node::Ty(ty));
+impl Ty {
+    pub fn new(tcx: &TyCtxt, kind: TyKind, span: Span) -> Id<Ty> {
+        let id = tcx.arenas.ast.next_ast_id();
+        let ty = tcx.arenas.ast.ty.borrow_mut().alloc(Ty { id, kind, span });
+        tcx.arenas.ast.insert_node(id, Node::Ty(ty));
         ty
     }
 }
 
-#[derive(Debug)]
-pub enum TyKind<'ast> {
+#[derive(Copy, Clone, Debug)]
+pub enum TyKind {
     /// N.B. This will eventually be generalized to tuples
     Unit,
     Name(Ident),
-    Arrow(&'ast Ty<'ast>, &'ast Ty<'ast>),
-    Forall(Ident, &'ast Ty<'ast>),
+    Arrow(Id<Ty>, Id<Ty>),
+    Forall(Ident, Id<Ty>),
     /// A placeholder for a type that was not syntactically well-formed
     Err,
 }
 
-impl<'a> TyKind<'a> {
-    pub fn description(&'a self) -> Cow<'a, str> {
+impl TyKind {
+    pub fn description(&'_ self) -> Cow<'_, str> {
         match self {
             TyKind::Unit => "unit".into(),
             TyKind::Name(..) => "type".into(),
@@ -177,56 +168,42 @@ pub enum DefnKind {
     Value,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub enum Node<'ast> {
-    Item(&'ast Item<'ast>),
-    Expr(&'ast Expr<'ast>),
-    Ty(&'ast Ty<'ast>),
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Node {
+    Item(Id<Item>),
+    Expr(Id<Expr>),
+    Ty(Id<Ty>),
 }
-
-impl<'ast> PartialEq<Node<'ast>> for Node<'ast> {
-    fn eq(&self, other: &Node<'ast>) -> bool {
-        match (self, other) {
-            (Self::Item(l0), Self::Item(r0)) => ptr::eq(*l0, *r0),
-            (Self::Expr(l0), Self::Expr(r0)) => ptr::eq(*l0, *r0),
-            (Self::Ty(l0), Self::Ty(r0)) => ptr::eq(*l0, *r0),
-            _ => false,
-        }
-    }
-}
-
-impl<'ast> Eq for Node<'ast> {}
-
-impl<'ast> Node<'ast> {
-    pub fn span(self) -> Span {
-        *match self {
-            Self::Item(Item { span, .. })
-            | Self::Expr(Expr { span, .. })
-            | Self::Ty(Ty { span, .. }) => span,
-        }
-    }
-
-    pub fn ident(self) -> Option<Ident> {
+impl Node {
+    pub fn span(self, tcx: &TyCtxt) -> Span {
         match self {
-            Self::Item(Item { ident, .. }) => Some(*ident),
-            Self::Expr(Expr { kind, .. }) => match kind {
+            Self::Item(id) => tcx.arenas.ast.item(id).span,
+            Self::Expr(id) => tcx.arenas.ast.expr(id).span,
+            Self::Ty(id) => tcx.arenas.ast.ty(id).span,
+        }
+    }
+
+    pub fn ident(self, tcx: &TyCtxt) -> Option<Ident> {
+        match self {
+            Self::Item(id) => Some(tcx.arenas.ast.item(id).ident),
+            Self::Expr(id) => match tcx.arenas.ast.expr(id).kind {
                 ExprKind::Unit | ExprKind::Apply(_, _) | ExprKind::Err => None,
                 ExprKind::Name(ident)
                 | ExprKind::Lambda(ident, _)
-                | ExprKind::Let(ident, _, _, _) => Some(*ident),
+                | ExprKind::Let(ident, _, _, _) => Some(ident),
             },
-            Self::Ty(Ty { kind, .. }) => match kind {
+            Self::Ty(id) => match tcx.arenas.ast.ty(id).kind {
                 TyKind::Unit | TyKind::Arrow(_, _) | TyKind::Err => None,
-                TyKind::Name(ident) | TyKind::Forall(ident, _) => Some(*ident),
+                TyKind::Name(ident) | TyKind::Forall(ident, _) => Some(ident),
             },
         }
     }
 
-    pub fn id(self) -> AstId {
+    pub fn id(self, tcx: &TyCtxt) -> AstId {
         match self {
-            Self::Item(Item { id, .. }) | Self::Expr(Expr { id, .. }) | Self::Ty(Ty { id, .. }) => {
-                *id
-            }
+            Self::Item(id) => tcx.arenas.ast.item(id).id,
+            Self::Expr(id) => tcx.arenas.ast.expr(id).id,
+            Self::Ty(id) => tcx.arenas.ast.ty(id).id,
         }
     }
 }

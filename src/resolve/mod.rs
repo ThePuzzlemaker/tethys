@@ -8,6 +8,7 @@
 
 use ariadne::{Label, ReportKind};
 use calypso_base::symbol::Symbol;
+use id_arena::Id;
 use std::collections::HashMap;
 
 use crate::{
@@ -58,10 +59,7 @@ impl ResolutionData {
     }
 }
 
-pub fn resolve_code_unit<'tcx>(
-    tcx: &'tcx TyCtxt<'tcx>,
-    items: &[&'tcx Item<'tcx>],
-) -> TysResult<()> {
+pub fn resolve_code_unit(tcx: &TyCtxt, items: &[Id<Item>]) -> TysResult<()> {
     let arena = &tcx.arenas.ast;
     let mut rcx = ResolutionCtxt {
         tcx,
@@ -76,8 +74,8 @@ pub fn resolve_code_unit<'tcx>(
 }
 
 struct ResolutionCtxt<'tcx> {
-    tcx: &'tcx TyCtxt<'tcx>,
-    arena: &'tcx AstArenas<'tcx>,
+    tcx: &'tcx TyCtxt,
+    arena: &'tcx AstArenas,
     // N.B. this will be robust once modules are implemented
     defn_names: HashMap<Symbol, AstId>,
     defn_id_to_span: HashMap<AstId, Span>,
@@ -90,15 +88,16 @@ struct ResolutionCtxt<'tcx> {
 }
 
 impl<'tcx> ResolutionCtxt<'tcx> {
-    fn lower_code_unit(&mut self, items: &[&'tcx Item<'tcx>]) -> TysResult<()> {
+    fn lower_code_unit(&mut self, items: &[Id<Item>]) -> TysResult<()> {
         for item in items {
-            self.lower_item(item)?;
+            self.lower_item(*item)?;
         }
         self.clear();
         Ok(())
     }
 
-    fn lower_item(&mut self, item: &'tcx Item<'tcx>) -> TysResult<()> {
+    fn lower_item(&mut self, item: Id<Item>) -> TysResult<()> {
+        let item = self.arena.item(item);
         match item.kind {
             ItemKind::Value(ty, expr) => {
                 if let Some(defn_id) = self.defn_names.get(&item.ident.symbol) {
@@ -107,7 +106,7 @@ impl<'tcx> ResolutionCtxt<'tcx> {
                         .arena
                         .get_node_by_id(*defn_id)
                         .expect("defn_id in nodes")
-                        .span();
+                        .span(self.tcx);
                     let span: Span = self.defn_id_to_span[defn_id]
                         .with_hi(ident_span.hi())
                         .into();
@@ -138,13 +137,14 @@ impl<'tcx> ResolutionCtxt<'tcx> {
         Ok(())
     }
 
-    fn lower_ty(&mut self, ty: &'tcx Ty<'tcx>) -> TysResult<Vec<(AstId, Symbol)>> {
-        fn inner<'tcx>(
-            rcx: &mut ResolutionCtxt<'tcx>,
-            ty: &'tcx Ty<'tcx>,
+    fn lower_ty(&mut self, ty: Id<Ty>) -> TysResult<Vec<(AstId, Symbol)>> {
+        fn inner(
+            rcx: &mut ResolutionCtxt,
+            ty: Id<Ty>,
             is_outer_forall: bool,
         ) -> TysResult<Vec<(AstId, Symbol)>> {
             let mut plus = vec![];
+            let ty = rcx.arena.ty(ty);
             match ty.kind {
                 TyKind::Unit => (),
                 TyKind::Name(var) => {
@@ -195,7 +195,8 @@ impl<'tcx> ResolutionCtxt<'tcx> {
         inner(self, ty, true)
     }
 
-    fn lower_expr(&mut self, expr: &'tcx Expr<'tcx>) -> TysResult<()> {
+    fn lower_expr(&mut self, expr: Id<Expr>) -> TysResult<()> {
+        let expr = self.arena.expr(expr);
         match expr.kind {
             ExprKind::Unit => (),
             ExprKind::Name(var) => {

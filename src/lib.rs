@@ -1,10 +1,6 @@
-use std::cell::RefCell;
-
 use ariadne::Source;
 use ctxt::TyCtxt;
 use error::TysResult;
-
-use crate::{ctxt::Arenas, diag::DiagReportCtxt};
 
 pub mod ast;
 pub mod ctxt;
@@ -13,16 +9,9 @@ pub mod error;
 pub mod infer;
 pub mod parse;
 pub mod resolve;
+// mod intern;
 
-pub fn get_tcx<'tcx>(arenas: &'tcx Arenas<'tcx>) -> TyCtxt<'tcx> {
-    TyCtxt {
-        arenas,
-        intern: ctxt::Interners::new(arenas),
-        drcx: RefCell::new(DiagReportCtxt::new()),
-    }
-}
-
-pub fn run<'tcx>(src: &str, tcx: &'tcx TyCtxt<'tcx>, suppress_output: bool) -> TysResult<()> {
+pub fn run(src: &str, tcx: &TyCtxt, suppress_output: bool) -> TysResult<()> {
     let items = parse::run(src, tcx);
 
     let _rd = resolve::resolve_code_unit(tcx, &items)?;

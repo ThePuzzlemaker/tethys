@@ -3,9 +3,7 @@ use std::{
     collections::HashMap,
 };
 
-use index_vec::IndexVec;
-use stable_vec::InlineStableVec;
-use typed_arena::Arena;
+use id_arena::{Arena, Id};
 
 use crate::{
     ast::{self, AstId, Node},
@@ -13,38 +11,53 @@ use crate::{
     resolve::ResolutionData,
 };
 
-pub struct TyCtxt<'tcx> {
-    pub arenas: &'tcx Arenas<'tcx>,
-    pub intern: Interners<'tcx>,
+#[derive(Default)]
+pub struct TyCtxt {
+    pub arenas: Arenas,
     pub drcx: RefCell<DiagReportCtxt>,
 }
 
-impl<'tcx> TyCtxt<'tcx> {
+impl TyCtxt {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn clear(&self) {
         self.arenas.clear();
-        self.intern.clear();
         self.drcx.borrow_mut().clear();
     }
 }
 
-pub struct AstArenas<'tcx> {
-    pub expr: Arena<ast::Expr<'tcx>>,
-    pub item: Arena<ast::Item<'tcx>>,
-    pub ty: Arena<ast::Ty<'tcx>>,
+pub struct AstArenas {
+    pub expr: RefCell<Arena<ast::Expr>>,
+    pub item: RefCell<Arena<ast::Item>>,
+    pub ty: RefCell<Arena<ast::Ty>>,
     pub res_data: RefCell<ResolutionData>,
     next_ast_id: Cell<u32>,
-    ast_id_to_node: RefCell<HashMap<AstId, Node<'tcx>>>,
+    ast_id_to_node: RefCell<HashMap<AstId, Node>>,
 }
 
-impl<'tcx> AstArenas<'tcx> {
+impl AstArenas {
     pub fn clear(&self) {
         self.res_data.borrow_mut().clear();
         self.next_ast_id.replace(1);
         self.ast_id_to_node.borrow_mut().clear();
     }
+
+    pub fn expr(&self, id: Id<ast::Expr>) -> ast::Expr {
+        self.expr.borrow()[id]
+    }
+
+    pub fn item(&self, id: Id<ast::Item>) -> ast::Item {
+        self.item.borrow()[id]
+    }
+
+    pub fn ty(&self, id: Id<ast::Ty>) -> ast::Ty {
+        self.ty.borrow()[id]
+    }
 }
 
-impl<'tcx> Default for AstArenas<'tcx> {
+impl Default for AstArenas {
     fn default() -> Self {
         Self {
             expr: Default::default(),
@@ -57,7 +70,7 @@ impl<'tcx> Default for AstArenas<'tcx> {
     }
 }
 
-impl<'tcx> AstArenas<'tcx> {
+impl AstArenas {
     pub fn next_ast_id(&self) -> AstId {
         let id = self.next_ast_id.get();
         assert!(id < u32::MAX);
@@ -65,40 +78,27 @@ impl<'tcx> AstArenas<'tcx> {
         AstId::from_raw(id)
     }
 
-    pub fn get_node_by_id(&self, id: AstId) -> Option<Node<'tcx>> {
+    pub fn get_node_by_id(&self, id: AstId) -> Option<Node> {
         self.ast_id_to_node.borrow().get(&id).copied()
     }
 
-    pub fn into_iter_nodes(&'tcx self) -> impl Iterator<Item = Node<'tcx>> {
+    pub fn into_iter_nodes(&self) -> impl Iterator<Item = Node> {
         let v = self.ast_id_to_node.borrow();
         v.values().copied().collect::<Vec<_>>().into_iter()
     }
 
-    pub(crate) fn insert_node(&'tcx self, id: AstId, node: Node<'tcx>) {
+    pub(crate) fn insert_node(&self, id: AstId, node: Node) {
         self.ast_id_to_node.borrow_mut().insert(id, node);
     }
 }
 
 #[derive(Default)]
-pub struct Arenas<'tcx> {
-    pub ast: AstArenas<'tcx>,
+pub struct Arenas {
+    pub ast: AstArenas,
 }
 
-impl<'tcx> Arenas<'tcx> {
+impl Arenas {
     pub fn clear(&self) {
         self.ast.clear();
     }
-}
-
-pub struct Interners<'tcx> {
-    /// The arena that interned objects are allocated from.
-    pub(crate) arenas: &'tcx Arenas<'tcx>,
-}
-
-impl<'tcx> Interners<'tcx> {
-    pub fn new(arenas: &'tcx Arenas<'tcx>) -> Self {
-        Self { arenas }
-    }
-
-    pub fn clear(&self) {}
 }

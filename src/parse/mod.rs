@@ -2,6 +2,7 @@ use std::{fmt, iter};
 
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::{prelude::*, Stream};
+use id_arena::Id;
 use logos::{Lexer, Logos};
 
 use calypso_base::{
@@ -129,9 +130,9 @@ impl Token {
     }
 }
 
-pub fn parser<'tcx>(
-    tcx: &'tcx TyCtxt<'tcx>,
-) -> impl Parser<Token, Vec<&'tcx crate::ast::Item<'tcx>>, Error = Simple<Token, Span>> + Clone {
+pub fn parser(
+    tcx: &'_ TyCtxt,
+) -> impl Parser<Token, Vec<Id<Item>>, Error = Simple<Token, Span>> + Clone + '_ {
     let ident = filter_map(|span: Span, tok| {
         if let Token::Ident(s) = tok {
             Ok(Ident {
@@ -176,7 +177,12 @@ pub fn parser<'tcx>(
             .clone()
             .then(just(Token::Arrow).ignore_then(ty).repeated())
             .foldl(|lhs, rhs| {
-                let sp = lhs.span.with_hi(rhs.span.hi());
+                let sp = tcx
+                    .arenas
+                    .ast
+                    .ty(lhs)
+                    .span
+                    .with_hi(tcx.arenas.ast.ty(rhs).span.hi());
                 Ty::new(tcx, TyKind::Arrow(lhs, rhs), sp.into())
             });
 
@@ -187,7 +193,7 @@ pub fn parser<'tcx>(
             .then(arrow.clone())
             .map(|((sp, vars), ty)| (vars, (sp, ty)))
             .foldr(|var, (sp, ty)| {
-                let sp = sp.with_hi(ty.span.hi()).into();
+                let sp = sp.with_hi(tcx.arenas.ast.ty(ty).span.hi()).into();
                 (sp, Ty::new(tcx, TyKind::Forall(var, ty), sp))
             })
             .map(|(_, ty)| ty);
@@ -209,7 +215,12 @@ pub fn parser<'tcx>(
             .then(primary.repeated())
             .map(|(lhs, rhs)| (rhs.into_iter().rev(), lhs))
             .foldr(|rhs, lhs| {
-                let sp = lhs.span.with_hi(rhs.span.hi());
+                let sp = tcx
+                    .arenas
+                    .ast
+                    .expr(lhs)
+                    .span
+                    .with_hi(tcx.arenas.ast.expr(rhs).span.hi());
                 Expr::new(tcx, ExprKind::Apply(lhs, rhs), sp.into())
             });
 
@@ -220,7 +231,7 @@ pub fn parser<'tcx>(
             .then(expr.clone())
             .map(|((sp, vars), expr)| (vars, (sp, expr)))
             .foldr(|var, (sp, expr)| {
-                let sp = sp.with_hi(expr.span.hi()).into();
+                let sp = sp.with_hi(tcx.arenas.ast.expr(expr).span.hi()).into();
                 (sp, Expr::new(tcx, ExprKind::Lambda(var, expr), sp))
             })
             .map(|(_, expr)| expr)
@@ -235,7 +246,7 @@ pub fn parser<'tcx>(
             .then_ignore(just(Token::In))
             .then(expr)
             .map(|((((sp, ident), ty), expr), inn)| {
-                let sp = sp.with_hi(inn.span.hi()).into();
+                let sp = sp.with_hi(tcx.arenas.ast.expr(inn).span.hi()).into();
                 Expr::new(tcx, ExprKind::Let(ident, ty, expr, inn), sp)
             })
             .or(lambda)
@@ -252,7 +263,7 @@ pub fn parser<'tcx>(
         .map(|vec| {
             vec.into_iter()
                 .map(|(((sp, name), ty), expr)| {
-                    let sp = sp.with_hi(expr.span.hi()).into();
+                    let sp = sp.with_hi(tcx.arenas.ast.expr(expr).span.hi()).into();
                     Item::new(tcx, name, ItemKind::Value(ty, expr), sp)
                 })
                 .collect::<Vec<_>>()
@@ -262,7 +273,7 @@ pub fn parser<'tcx>(
 }
 
 // TODO(@ThePuzzlemaker: diag): actually use DRCX for this
-pub fn run<'tcx>(src: &str, tcx: &'tcx TyCtxt<'tcx>) -> Vec<&'tcx Item<'tcx>> {
+pub fn run(src: &str, tcx: &TyCtxt) -> Vec<Id<Item>> {
     let lex = Token::lexer(src).spanned().map(|(x, sp)| {
         (
             x,

@@ -1,16 +1,15 @@
-use tethys::ctxt::{Arenas, TyCtxt};
+use tethys::ctxt::TyCtxt;
 
 use crate::header::{UitestHeader, UitestMode};
 
 pub fn run_test(path: &str, header: UitestHeader, code: String) -> Option<Vec<String>> {
-    let arenas = Arenas::default();
-    let tcx = tethys::get_tcx(&arenas);
+    let tcx = TyCtxt::default();
     header.run(&tcx, code);
     header.verify(&tcx)
 }
 
 impl UitestHeader {
-    fn run<'tcx>(&self, tcx: &'tcx TyCtxt<'tcx>, code: String) {
+    fn run(&self, tcx: &TyCtxt, code: String) {
         match self.mode {
             // Check-pass and diag both just run typechecking, but the verification is different
             UitestMode::CheckPass | UitestMode::Diag => {
@@ -19,7 +18,7 @@ impl UitestHeader {
         }
     }
 
-    fn verify<'tcx>(&self, _tcx: &'tcx TyCtxt<'tcx>) -> Option<Vec<String>> {
+    fn verify(&self, _tcx: &TyCtxt) -> Option<Vec<String>> {
         todo!()
     }
 }
