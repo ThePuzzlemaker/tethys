@@ -1,10 +1,10 @@
-def id
-  : forall 'a. 'a -> 'a
-  = \x.x
+#def id
+#  : forall 'a. 'a -> 'a
+#  = \x.x
 
 def const
-  : forall 'a 'b. 'a -> 'b -> 'a
-  = \x y.x
+   : forall 'a 'b. 'a -> 'b -> 'a
+   = \x y.x
 
 # Commented out for now
 

@@ -5,7 +5,7 @@ use calypso_base::symbol::Ident;
 use color_eyre::eyre;
 
 use tethys::ast::{AstId, Node};
-use tethys::ctxt::TyCtxt;
+use tethys::ctxt::GlobalCtxt;
 use tethys::parse::Span;
 use tethys::{parse, resolve};
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -319,25 +319,25 @@ fn worker_thread(
     mut rx: Receiver<Request>,
     tx: Sender<Result<Response>>,
 ) {
-    let tcx = TyCtxt::new();
+    let gcx = GlobalCtxt::new();
     let mut items = Vec::new();
     while let Some(req) = rx.blocking_recv() {
         match req {
             Request::UpdateFile => {
                 items.clear();
-                tcx.clear();
+                gcx.clear();
                 let file_guard = file.blocking_read();
                 let (url, src) = file_guard.as_ref().unwrap();
-                items = parse::run(src.as_ref(), &tcx);
-                match resolve::resolve_code_unit(&tcx, &items) {
+                items = parse::run(src.as_ref(), &gcx);
+                match resolve::resolve_code_unit(&gcx, &items) {
                     Err(err) => tx.blocking_send(Err(stringify_error(err))).unwrap(),
                     Ok(_) => tx.blocking_send(Ok(Response::Ok)).unwrap(),
                 }
                 trace!("UpdateFile({}): done", url);
             }
-            Request::GetAstId(offset) => match get_node(&tcx, offset) {
+            Request::GetAstId(offset) => match get_node(&gcx, offset) {
                 Some(node) => {
-                    let id = node.id(&tcx);
+                    let id = node.id(&gcx);
                     debug!("GetAstId({:?}): {:?}", offset, id);
                     tx.blocking_send(Ok(Response::AstId(id))).unwrap();
                 }
@@ -349,9 +349,9 @@ fn worker_thread(
                     .unwrap()
                 }
             },
-            Request::GetActualSpan(offset) => match get_node(&tcx, offset) {
+            Request::GetActualSpan(offset) => match get_node(&gcx, offset) {
                 Some(node) => {
-                    let span = node.span(&tcx);
+                    let span = node.span(&gcx);
                     debug!("GetActualSpan({:?}): {:?}", offset, span);
                     tx.blocking_send(Ok(Response::Span(span))).unwrap();
                 }
@@ -364,7 +364,7 @@ fn worker_thread(
                 }
             },
             Request::GetDeclarationOf(ast_id) => {
-                if let Some(res) = tcx.arenas.ast.res_data.borrow().get_by_id(ast_id) {
+                if let Some(res) = gcx.arenas.ast.res_data.borrow().get_by_id(ast_id) {
                     let id = res.id();
                     if let Some(id) = id {
                         debug!("GetDeclarationOf({:?}: {:?}", ast_id, id);
@@ -382,8 +382,8 @@ fn worker_thread(
                 }
             }
             Request::GetSpanOf(ast_id) => {
-                if let Some(node) = tcx.arenas.ast.get_node_by_id(ast_id) {
-                    let span = node.span(&tcx);
+                if let Some(node) = gcx.arenas.ast.get_node_by_id(ast_id) {
+                    let span = node.span(&gcx);
                     debug!("GetSpanOf({:?}): {:?}", ast_id, span);
                     tx.blocking_send(Ok(Response::Span(span))).unwrap();
                 } else {
@@ -395,8 +395,8 @@ fn worker_thread(
                 }
             }
             Request::GetIdent(ast_id) => {
-                if let Some(node) = tcx.arenas.ast.get_node_by_id(ast_id) {
-                    let ident = node.ident(&tcx);
+                if let Some(node) = gcx.arenas.ast.get_node_by_id(ast_id) {
+                    let ident = node.ident(&gcx);
                     debug!("GetSymbol({:?}): {:?}", ast_id, ident);
                     let res = match ident {
                         Some(ident) => Ok(Response::Ident(ident)),
@@ -418,16 +418,16 @@ fn worker_thread(
 }
 
 /// Find the node with the smallest span that includes a given binary offset.
-fn get_node(tcx: &TyCtxt, offset: u32) -> Option<Node> {
-    tcx.arenas
+fn get_node(gcx: &GlobalCtxt, offset: u32) -> Option<Node> {
+    gcx.arenas
         .ast
         .into_iter_nodes()
         .filter(|node| {
-            let span = node.span(tcx);
+            let span = node.span(gcx);
 
             span.lo() <= offset && offset <= span.hi()
         })
-        .min_by_key(|node| node.span(tcx).len())
+        .min_by_key(|node| node.span(gcx).len())
 }
 
 fn stringify_error<E: Display>(e: E) -> LspError {

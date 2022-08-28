@@ -8,16 +8,18 @@ use id_arena::{Arena, Id};
 use crate::{
     ast::{self, AstId, Node},
     diag::DiagReportCtxt,
+    intern::Interner,
     resolve::ResolutionData,
+    typeck::facade::{self, TyS},
 };
 
-#[derive(Default)]
-pub struct TyCtxt {
+#[derive(Default, Debug)]
+pub struct GlobalCtxt {
     pub arenas: Arenas,
     pub drcx: RefCell<DiagReportCtxt>,
 }
 
-impl TyCtxt {
+impl GlobalCtxt {
     pub fn new() -> Self {
         Self::default()
     }
@@ -28,6 +30,7 @@ impl TyCtxt {
     }
 }
 
+#[derive(Debug)]
 pub struct AstArenas {
     pub expr: RefCell<Arena<ast::Expr>>,
     pub item: RefCell<Arena<ast::Item>>,
@@ -92,13 +95,64 @@ impl AstArenas {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug)]
+pub struct TyckArenas {
+    tys_arena: RefCell<Arena<facade::TyS>>,
+    tys_interner: Interner<facade::TyS>,
+    common_tys: Option<CommonTys>,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct CommonTys {
+    pub unit: facade::Ty,
+    pub err: facade::Ty,
+}
+
+impl Default for TyckArenas {
+    fn default() -> Self {
+        let mut res = Self {
+            tys_arena: Default::default(),
+            tys_interner: Default::default(),
+            common_tys: None,
+        };
+
+        res.common_tys = Some(CommonTys {
+            unit: res.intern_ty(facade::TyKind::Unit),
+            err: res.intern_ty(facade::TyKind::Err),
+        });
+
+        res
+    }
+}
+
+impl TyckArenas {
+    pub fn clear(&self) {}
+
+    pub fn intern_ty(&self, kind: facade::TyKind) -> facade::Ty {
+        facade::Ty(
+            self.tys_interner
+                .intern(&mut *self.tys_arena.borrow_mut(), facade::TyS { kind }),
+        )
+    }
+
+    pub fn common_tys(&self) -> CommonTys {
+        self.common_tys.unwrap()
+    }
+
+    pub(crate) fn tys(&self, id: Id<TyS>) -> TyS {
+        self.tys_arena.borrow()[id].clone()
+    }
+}
+
+#[derive(Default, Debug)]
 pub struct Arenas {
     pub ast: AstArenas,
+    pub tyck: TyckArenas,
 }
 
 impl Arenas {
     pub fn clear(&self) {
         self.ast.clear();
+        self.tyck.clear();
     }
 }

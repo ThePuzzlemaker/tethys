@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use crate::{
     ast::{AstId, DefnKind, Expr, ExprKind, Item, ItemKind, Res, Ty, TyKind},
-    ctxt::{AstArenas, TyCtxt},
+    ctxt::{AstArenas, GlobalCtxt},
     diag::Diagnostic,
     error::TysResult,
     parse::Span,
@@ -59,10 +59,10 @@ impl ResolutionData {
     }
 }
 
-pub fn resolve_code_unit(tcx: &TyCtxt, items: &[Id<Item>]) -> TysResult<()> {
-    let arena = &tcx.arenas.ast;
+pub fn resolve_code_unit(gcx: &GlobalCtxt, items: &[Id<Item>]) -> TysResult<()> {
+    let arena = &gcx.arenas.ast;
     let mut rcx = ResolutionCtxt {
-        tcx,
+        gcx,
         arena,
         defn_names: HashMap::new(),
         defn_id_to_span: HashMap::new(),
@@ -73,21 +73,21 @@ pub fn resolve_code_unit(tcx: &TyCtxt, items: &[Id<Item>]) -> TysResult<()> {
     Ok(())
 }
 
-struct ResolutionCtxt<'tcx> {
-    tcx: &'tcx TyCtxt,
-    arena: &'tcx AstArenas,
+struct ResolutionCtxt<'gcx> {
+    gcx: &'gcx GlobalCtxt,
+    arena: &'gcx AstArenas,
     // N.B. this will be robust once modules are implemented
     defn_names: HashMap<Symbol, AstId>,
     defn_id_to_span: HashMap<AstId, Span>,
-    /// A stack of `forall`-binders that we're under at the moment.
-    /// `Vec<(AstId of forall, name of bound variable)>`
+    /// A stack of `forall`-binders that we're under at the moment. `Vec<(AstId
+    /// of forall, name of bound variable)>`
     ty_stack: Vec<(AstId, Symbol)>,
     /// Similar to [`ty_stack`], just for expressions (i.e. `let`- and
     /// lambda-binders)
     expr_stack: Vec<(AstId, Symbol)>,
 }
 
-impl<'tcx> ResolutionCtxt<'tcx> {
+impl<'gcx> ResolutionCtxt<'gcx> {
     fn lower_code_unit(&mut self, items: &[Id<Item>]) -> TysResult<()> {
         for item in items {
             self.lower_item(*item)?;
@@ -106,7 +106,7 @@ impl<'tcx> ResolutionCtxt<'tcx> {
                         .arena
                         .get_node_by_id(*defn_id)
                         .expect("defn_id in nodes")
-                        .span(self.tcx);
+                        .span(self.gcx);
                     let span: Span = self.defn_id_to_span[defn_id]
                         .with_hi(ident_span.hi())
                         .into();
@@ -122,7 +122,7 @@ impl<'tcx> ResolutionCtxt<'tcx> {
                         )
                         .with_note("top-level `def`initions must have unique names")
                         .finish();
-                    let mut drcx = self.tcx.drcx.borrow_mut();
+                    let mut drcx = self.gcx.drcx.borrow_mut();
                     drcx.report_syncd(report);
                 } else {
                     self.defn_names.insert(item.ident.symbol, item.id);
@@ -168,7 +168,7 @@ impl<'tcx> ResolutionCtxt<'tcx> {
                                     Label::new(ty.span).with_message("not found in this scope"),
                                 )
                                 .finish();
-                        let mut drcx = rcx.tcx.drcx.borrow_mut();
+                        let mut drcx = rcx.gcx.drcx.borrow_mut();
                         drcx.report_syncd(report);
                         drop(drcx);
                         Res::Err
@@ -216,7 +216,7 @@ impl<'tcx> ResolutionCtxt<'tcx> {
                         .with_message(format!("cannot find value `{}` in this scope", var.symbol))
                         .with_label(Label::new(expr.span).with_message("not found in this scope"))
                         .finish();
-                    let mut drcx = self.tcx.drcx.borrow_mut();
+                    let mut drcx = self.gcx.drcx.borrow_mut();
                     drcx.report_syncd(report);
                     drop(drcx);
                     Res::Err

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use calypso_base::symbol::Ident;
 use id_arena::Id;
 
-use crate::{ctxt::TyCtxt, parse::Span};
+use crate::{ctxt::GlobalCtxt, parse::Span};
 
 pub const DUMMY_AST_ID: AstId = AstId { _raw: 0 };
 
@@ -27,15 +27,15 @@ pub struct Item {
 }
 
 impl Item {
-    pub fn new(tcx: &TyCtxt, ident: Ident, kind: ItemKind, span: Span) -> Id<Item> {
-        let id = tcx.arenas.ast.next_ast_id();
-        let item = tcx.arenas.ast.item.borrow_mut().alloc(Item {
+    pub fn new(gcx: &GlobalCtxt, ident: Ident, kind: ItemKind, span: Span) -> Id<Item> {
+        let id = gcx.arenas.ast.next_ast_id();
+        let item = gcx.arenas.ast.item.borrow_mut().alloc(Item {
             id,
             kind,
             ident,
             span,
         });
-        tcx.arenas.ast.insert_node(id, Node::Item(item));
+        gcx.arenas.ast.insert_node(id, Node::Item(item));
         item
     }
 }
@@ -54,15 +54,15 @@ pub struct Expr {
 }
 
 impl Expr {
-    pub fn new(tcx: &TyCtxt, kind: ExprKind, span: Span) -> Id<Expr> {
-        let id = tcx.arenas.ast.next_ast_id();
-        let expr = tcx
+    pub fn new(gcx: &GlobalCtxt, kind: ExprKind, span: Span) -> Id<Expr> {
+        let id = gcx.arenas.ast.next_ast_id();
+        let expr = gcx
             .arenas
             .ast
             .expr
             .borrow_mut()
             .alloc(Expr { id, kind, span });
-        tcx.arenas.ast.insert_node(id, Node::Expr(expr));
+        gcx.arenas.ast.insert_node(id, Node::Expr(expr));
         expr
     }
 }
@@ -86,10 +86,10 @@ pub struct Ty {
 }
 
 impl Ty {
-    pub fn new(tcx: &TyCtxt, kind: TyKind, span: Span) -> Id<Ty> {
-        let id = tcx.arenas.ast.next_ast_id();
-        let ty = tcx.arenas.ast.ty.borrow_mut().alloc(Ty { id, kind, span });
-        tcx.arenas.ast.insert_node(id, Node::Ty(ty));
+    pub fn new(gcx: &GlobalCtxt, kind: TyKind, span: Span) -> Id<Ty> {
+        let id = gcx.arenas.ast.next_ast_id();
+        let ty = gcx.arenas.ast.ty.borrow_mut().alloc(Ty { id, kind, span });
+        gcx.arenas.ast.insert_node(id, Node::Ty(ty));
         ty
     }
 }
@@ -123,8 +123,7 @@ pub enum Res {
     ///
     /// **Belongs to the type namespace.**
     PrimTy(PrimTy),
-    /// Corresponds to something defined in user code, with a unique
-    /// [`AstId`].
+    /// Corresponds to something defined in user code, with a unique [`AstId`].
     ///
     /// **Does not belong to a specific namespace.**
     Defn(DefnKind, AstId),
@@ -175,35 +174,35 @@ pub enum Node {
     Ty(Id<Ty>),
 }
 impl Node {
-    pub fn span(self, tcx: &TyCtxt) -> Span {
+    pub fn span(self, gcx: &GlobalCtxt) -> Span {
         match self {
-            Self::Item(id) => tcx.arenas.ast.item(id).span,
-            Self::Expr(id) => tcx.arenas.ast.expr(id).span,
-            Self::Ty(id) => tcx.arenas.ast.ty(id).span,
+            Self::Item(id) => gcx.arenas.ast.item(id).span,
+            Self::Expr(id) => gcx.arenas.ast.expr(id).span,
+            Self::Ty(id) => gcx.arenas.ast.ty(id).span,
         }
     }
 
-    pub fn ident(self, tcx: &TyCtxt) -> Option<Ident> {
+    pub fn ident(self, gcx: &GlobalCtxt) -> Option<Ident> {
         match self {
-            Self::Item(id) => Some(tcx.arenas.ast.item(id).ident),
-            Self::Expr(id) => match tcx.arenas.ast.expr(id).kind {
+            Self::Item(id) => Some(gcx.arenas.ast.item(id).ident),
+            Self::Expr(id) => match gcx.arenas.ast.expr(id).kind {
                 ExprKind::Unit | ExprKind::Apply(_, _) | ExprKind::Err => None,
                 ExprKind::Name(ident)
                 | ExprKind::Lambda(ident, _)
                 | ExprKind::Let(ident, _, _, _) => Some(ident),
             },
-            Self::Ty(id) => match tcx.arenas.ast.ty(id).kind {
+            Self::Ty(id) => match gcx.arenas.ast.ty(id).kind {
                 TyKind::Unit | TyKind::Arrow(_, _) | TyKind::Err => None,
                 TyKind::Name(ident) | TyKind::Forall(ident, _) => Some(ident),
             },
         }
     }
 
-    pub fn id(self, tcx: &TyCtxt) -> AstId {
+    pub fn id(self, gcx: &GlobalCtxt) -> AstId {
         match self {
-            Self::Item(id) => tcx.arenas.ast.item(id).id,
-            Self::Expr(id) => tcx.arenas.ast.expr(id).id,
-            Self::Ty(id) => tcx.arenas.ast.ty(id).id,
+            Self::Item(id) => gcx.arenas.ast.item(id).id,
+            Self::Expr(id) => gcx.arenas.ast.expr(id).id,
+            Self::Ty(id) => gcx.arenas.ast.ty(id).id,
         }
     }
 }

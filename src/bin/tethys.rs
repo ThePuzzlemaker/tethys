@@ -1,6 +1,6 @@
 use std::{env, fs};
 
-use tethys::ctxt::TyCtxt;
+use tethys::ctxt::GlobalCtxt;
 
 use color_eyre::eyre;
 
@@ -10,8 +10,8 @@ fn main() -> eyre::Result<()> {
     let src = fs::read_to_string(env::args().nth(1).expect("Expected file argument"))
         .expect("Failed to read file");
 
-    let tcx = TyCtxt::default();
-    let _ = tethys::run(&src, &tcx, false);
+    let gcx = GlobalCtxt::default();
+    let _ = tethys::run(&src, &gcx, false);
 
     Ok(())
 }

@@ -12,7 +12,7 @@ use calypso_base::{
 
 use crate::ast::{Expr, ExprKind, Item, ItemKind, Ty, TyKind};
 
-use crate::ctxt::TyCtxt;
+use crate::ctxt::GlobalCtxt;
 
 pub type SyntaxError = Simple<Token, Span>;
 
@@ -131,7 +131,7 @@ impl Token {
 }
 
 pub fn parser(
-    tcx: &'_ TyCtxt,
+    gcx: &'_ GlobalCtxt,
 ) -> impl Parser<Token, Vec<Id<Item>>, Error = Simple<Token, Span>> + Clone + '_ {
     let ident = filter_map(|span: Span, tok| {
         if let Token::Ident(s) = tok {
@@ -165,25 +165,25 @@ pub fn parser(
 
     let ty = recursive(|ty| {
         let primary = ident
-            .map_with_span(|ident, span| Ty::new(tcx, TyKind::Name(ident), span))
+            .map_with_span(|ident, span| Ty::new(gcx, TyKind::Name(ident), span))
             .or(just([Token::LParen, Token::RParen])
-                .map_with_span(|_, span| Ty::new(tcx, TyKind::Unit, span)))
+                .map_with_span(|_, span| Ty::new(gcx, TyKind::Unit, span)))
             .or(ty
                 .clone()
                 .delimited_by(just(Token::LParen), just(Token::RParen)))
-            .or(tyvar.map_with_span(|ident, span| Ty::new(tcx, TyKind::Name(ident), span)));
+            .or(tyvar.map_with_span(|ident, span| Ty::new(gcx, TyKind::Name(ident), span)));
 
         let arrow = primary
             .clone()
             .then(just(Token::Arrow).ignore_then(ty).repeated())
             .foldl(|lhs, rhs| {
-                let sp = tcx
+                let sp = gcx
                     .arenas
                     .ast
                     .ty(lhs)
                     .span
-                    .with_hi(tcx.arenas.ast.ty(rhs).span.hi());
-                Ty::new(tcx, TyKind::Arrow(lhs, rhs), sp.into())
+                    .with_hi(gcx.arenas.ast.ty(rhs).span.hi());
+                Ty::new(gcx, TyKind::Arrow(lhs, rhs), sp.into())
             });
 
         let forall = just(Token::Forall)
@@ -193,8 +193,8 @@ pub fn parser(
             .then(arrow.clone())
             .map(|((sp, vars), ty)| (vars, (sp, ty)))
             .foldr(|var, (sp, ty)| {
-                let sp = sp.with_hi(tcx.arenas.ast.ty(ty).span.hi()).into();
-                (sp, Ty::new(tcx, TyKind::Forall(var, ty), sp))
+                let sp = sp.with_hi(gcx.arenas.ast.ty(ty).span.hi()).into();
+                (sp, Ty::new(gcx, TyKind::Forall(var, ty), sp))
             })
             .map(|(_, ty)| ty);
 
@@ -203,9 +203,9 @@ pub fn parser(
 
     let expr = recursive(|expr| {
         let primary = ident
-            .map_with_span(|ident, span| Expr::new(tcx, ExprKind::Name(ident), span))
+            .map_with_span(|ident, span| Expr::new(gcx, ExprKind::Name(ident), span))
             .or(just([Token::LParen, Token::RParen])
-                .map_with_span(|_, span| Expr::new(tcx, ExprKind::Unit, span)))
+                .map_with_span(|_, span| Expr::new(gcx, ExprKind::Unit, span)))
             .or(expr
                 .clone()
                 .delimited_by(just(Token::LParen), just(Token::RParen)));
@@ -215,13 +215,13 @@ pub fn parser(
             .then(primary.repeated())
             .map(|(lhs, rhs)| (rhs.into_iter().rev(), lhs))
             .foldr(|rhs, lhs| {
-                let sp = tcx
+                let sp = gcx
                     .arenas
                     .ast
                     .expr(lhs)
                     .span
-                    .with_hi(tcx.arenas.ast.expr(rhs).span.hi());
-                Expr::new(tcx, ExprKind::Apply(lhs, rhs), sp.into())
+                    .with_hi(gcx.arenas.ast.expr(rhs).span.hi());
+                Expr::new(gcx, ExprKind::Apply(lhs, rhs), sp.into())
             });
 
         let lambda = just(Token::Backslash)
@@ -231,8 +231,8 @@ pub fn parser(
             .then(expr.clone())
             .map(|((sp, vars), expr)| (vars, (sp, expr)))
             .foldr(|var, (sp, expr)| {
-                let sp = sp.with_hi(tcx.arenas.ast.expr(expr).span.hi()).into();
-                (sp, Expr::new(tcx, ExprKind::Lambda(var, expr), sp))
+                let sp = sp.with_hi(gcx.arenas.ast.expr(expr).span.hi()).into();
+                (sp, Expr::new(gcx, ExprKind::Lambda(var, expr), sp))
             })
             .map(|(_, expr)| expr)
             .or(appl.clone());
@@ -246,8 +246,8 @@ pub fn parser(
             .then_ignore(just(Token::In))
             .then(expr)
             .map(|((((sp, ident), ty), expr), inn)| {
-                let sp = sp.with_hi(tcx.arenas.ast.expr(inn).span.hi()).into();
-                Expr::new(tcx, ExprKind::Let(ident, ty, expr, inn), sp)
+                let sp = sp.with_hi(gcx.arenas.ast.expr(inn).span.hi()).into();
+                Expr::new(gcx, ExprKind::Let(ident, ty, expr, inn), sp)
             })
             .or(lambda)
     });
@@ -263,8 +263,8 @@ pub fn parser(
         .map(|vec| {
             vec.into_iter()
                 .map(|(((sp, name), ty), expr)| {
-                    let sp = sp.with_hi(tcx.arenas.ast.expr(expr).span.hi()).into();
-                    Item::new(tcx, name, ItemKind::Value(ty, expr), sp)
+                    let sp = sp.with_hi(gcx.arenas.ast.expr(expr).span.hi()).into();
+                    Item::new(gcx, name, ItemKind::Value(ty, expr), sp)
                 })
                 .collect::<Vec<_>>()
         });
@@ -273,7 +273,7 @@ pub fn parser(
 }
 
 // TODO(@ThePuzzlemaker: diag): actually use DRCX for this
-pub fn run(src: &str, tcx: &TyCtxt) -> Vec<Id<Item>> {
+pub fn run(src: &str, gcx: &GlobalCtxt) -> Vec<Id<Item>> {
     let lex = Token::lexer(src).spanned().map(|(x, sp)| {
         (
             x,
@@ -282,7 +282,7 @@ pub fn run(src: &str, tcx: &TyCtxt) -> Vec<Id<Item>> {
     });
     let srclen = src.len().try_into().unwrap();
     let stream = Stream::from_iter(Span(span::Span::new(srclen, srclen + 1)), lex);
-    let (decls, parse_errs) = parser(tcx).parse_recovery(stream);
+    let (decls, parse_errs) = parser(gcx).parse_recovery(stream);
 
     parse_errs
         .into_iter()

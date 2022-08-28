@@ -1,5 +1,7 @@
 //! The global reporting context for diagnostics.
 
+use std::fmt;
+
 use crate::parse::Span;
 
 pub type Diagnostic = ariadne::Report<Span>;
@@ -9,6 +11,12 @@ pub struct DiagReportCtxt {
     errors: Vec<Diagnostic>,
     nonfatals: Vec<Diagnostic>,
     fatal: Option<Diagnostic>,
+}
+
+impl fmt::Debug for DiagReportCtxt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DiagReportCtxt").finish_non_exhaustive()
+    }
 }
 
 impl Default for DiagReportCtxt {

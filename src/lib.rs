@@ -1,24 +1,30 @@
+use std::{fmt, rc::Rc};
+
 use ariadne::Source;
-use ctxt::TyCtxt;
+use ctxt::GlobalCtxt;
 use error::TysResult;
+use typeck::facade::{Hole, HoleRef, SubstableForall, Ty, TyKind};
+
+use crate::typeck::TypeckCtxt;
 
 pub mod ast;
 pub mod ctxt;
 pub mod diag;
 pub mod error;
 pub mod infer;
+mod intern;
 pub mod parse;
 pub mod resolve;
-// mod intern;
+mod typeck;
 
-pub fn run(src: &str, tcx: &TyCtxt, suppress_output: bool) -> TysResult<()> {
-    let items = parse::run(src, tcx);
+pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> {
+    let items = parse::run(src, gcx);
 
-    let _rd = resolve::resolve_code_unit(tcx, &items)?;
-    // let cu = lowering::lower_code_unit(tcx, decls)?;
+    let _rd = resolve::resolve_code_unit(gcx, &items)?;
+    // let cu = lowering::lower_code_unit(gcx, decls)?;
 
     if !suppress_output {
-        let drcx = tcx.drcx.borrow();
+        let drcx = gcx.drcx.borrow();
         for err in drcx.errors() {
             err.eprint(Source::from(&src))?;
         }
@@ -28,7 +34,24 @@ pub fn run(src: &str, tcx: &TyCtxt, suppress_output: bool) -> TysResult<()> {
         }
 
         println!("{:#?}", items);
-        println!("{:#?}", tcx.arenas.ast.res_data.borrow().to_hash_map());
+        println!("{:#?}", gcx.arenas.ast.res_data.borrow().to_hash_map());
+        println!("\n{:#?}", gcx);
+
+        let item = gcx.arenas.ast.item(*items.first().unwrap());
+        let mut tyck = TypeckCtxt::new();
+        match item.kind {
+            ast::ItemKind::Value(ty, expr) => {
+                println!(
+                    "inferred: {:#?}",
+                    TyPp(gcx, typeck::infer(&mut tyck, gcx, expr))
+                );
+                let ty = typeck::facade::ast_ty_to_facade(gcx, &mut Vec::new(), ty);
+                println!("expected: {:#?}", TyPp(gcx, ty));
+                typeck::check(&mut tyck, gcx, expr, ty);
+            }
+        }
+        println!("\n{:#?}", gcx);
+        println!("\n{:#?}", tyck);
     }
 
     Ok(())
@@ -52,6 +75,65 @@ pub fn run(src: &str, tcx: &TyCtxt, suppress_output: bool) -> TysResult<()> {
     //         println!("{}", expr.pretty(&ppa).pretty(80));
     //     }
     // }
+}
+
+struct HolePp<'a>(&'a GlobalCtxt, HoleRef);
+impl<'a> fmt::Debug for HolePp<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self.1 .0.borrow() {
+            Hole::Empty(lvl) => f.debug_tuple("Empty").field(&lvl).finish(),
+            Hole::Filled(ty) => f.debug_tuple("Filled").field(&TyPp(self.0, ty)).finish(),
+        }
+    }
+}
+
+struct SubstPp<'a>(&'a GlobalCtxt, SubstableForall);
+impl<'a> fmt::Debug for SubstPp<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ty = typeck::facade::ast_ty_to_facade(self.0, &mut Vec::new(), self.1.ty);
+        f.debug_struct("SubstableForall")
+            .field(
+                "env",
+                &self
+                    .1
+                    .env
+                    .iter()
+                    .map(|(sym, ty)| (*sym, TyPp(self.0, *ty)))
+                    .collect::<Vec<_>>(),
+            )
+            .field("ty", &TyPp(self.0, ty))
+            .finish()
+    }
+}
+
+struct TyPp<'a>(&'a GlobalCtxt, Ty);
+impl<'a> fmt::Debug for TyPp<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.1.kind(self.0) {
+            TyKind::Unit => f.debug_tuple("Unit").finish(),
+            TyKind::Bound(idx, symbol) => {
+                f.debug_tuple("Bound").field(&idx).field(&symbol).finish()
+            }
+            TyKind::Rigid(lvl) => f.debug_tuple("Rigid").field(&lvl).finish(),
+            TyKind::Hole(h) => f
+                .debug_tuple("Hole")
+                .field(&Rc::as_ptr(&h.0))
+                .field(&HolePp(self.0, h))
+                .finish(),
+            TyKind::Free(name) => f.debug_tuple("Free").field(&name).finish(),
+            TyKind::Arrow(a, b) => f
+                .debug_tuple("Arrow")
+                .field(&TyPp(self.0, a))
+                .field(&TyPp(self.0, b))
+                .finish(),
+            TyKind::Forall(n, s) => f
+                .debug_tuple("Forall")
+                .field(&n)
+                .field(&SubstPp(self.0, s))
+                .finish(),
+            TyKind::Err => f.debug_tuple("Err").finish(),
+        }
+    }
 }
 
 // fn print_decl(decl: Decl, n: &mut usize, r: ReportBuilder<Span>) -> ReportBuilder<Span> {
