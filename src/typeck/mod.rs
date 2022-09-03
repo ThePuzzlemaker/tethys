@@ -9,7 +9,7 @@ use crate::{
     typeck::facade::{Hole, TyKind},
 };
 
-use self::facade::{DeBruijnLvl, HoleRef, Ty};
+use self::facade::{ast_ty_to_facade, DeBruijnLvl, HoleRef, Ty};
 
 pub mod facade;
 
@@ -170,7 +170,8 @@ fn eagerly_instantiate(tyck: &mut TypeckCtxt, gcx: &GlobalCtxt, ty: Ty) -> Ty {
 }
 
 pub(crate) fn check(tyck: &mut TypeckCtxt, gcx: &GlobalCtxt, term: Id<ast::Expr>, ty: Ty) {
-    match (gcx.arenas.ast.expr(term).kind, ty.deref(gcx).kind(gcx)) {
+    let ty = ty.deref(gcx);
+    match (gcx.arenas.ast.expr(term).kind, ty.kind(gcx)) {
         (_, TyKind::Forall(n, a)) => {
             tyck.push_ty(n);
             let ty = a.instantiate(
@@ -186,7 +187,19 @@ pub(crate) fn check(tyck: &mut TypeckCtxt, gcx: &GlobalCtxt, term: Id<ast::Expr>
             check(tyck, gcx, body, b);
             tyck.pop_var();
         }
-        (ExprKind::Let(..), _) => todo!(),
+        (ExprKind::Let(name, None, val, in_expr), _) => {
+            let val_ty = infer(tyck, gcx, val);
+            tyck.push_var(name.symbol, val_ty);
+            check(tyck, gcx, in_expr, ty);
+            tyck.pop_var();
+        }
+        (ExprKind::Let(name, Some(val_ty), val, in_expr), _) => {
+            let val_ty = ast_ty_to_facade(gcx, &mut Vec::new(), val_ty);
+            check(tyck, gcx, val, val_ty);
+            tyck.push_var(name.symbol, val_ty);
+            check(tyck, gcx, in_expr, ty);
+            tyck.pop_var();
+        }
         _ => {
             let inferred_ty = infer_and_inst(tyck, gcx, term);
             unify(tyck, gcx, inferred_ty, ty);
@@ -237,7 +250,21 @@ pub(crate) fn infer(tyck: &mut TypeckCtxt, gcx: &GlobalCtxt, term: Id<ast::Expr>
             tyck.pop_var();
             gcx.arenas.tyck.intern_ty(TyKind::Arrow(arg_ty, res_ty))
         }
-        ExprKind::Let(..) => todo!(),
+        ExprKind::Let(name, None, val, in_expr) => {
+            let val_ty = infer(tyck, gcx, val);
+            tyck.push_var(name.symbol, val_ty);
+            let expr_ty = infer(tyck, gcx, in_expr);
+            tyck.pop_var();
+            expr_ty
+        }
+        ExprKind::Let(name, Some(val_ty), val, in_expr) => {
+            let val_ty = ast_ty_to_facade(gcx, &mut Vec::new(), val_ty);
+            check(tyck, gcx, val, val_ty);
+            tyck.push_var(name.symbol, val_ty);
+            let expr_ty = infer(tyck, gcx, in_expr);
+            tyck.pop_var();
+            expr_ty
+        }
         _ => todo!(),
     }
 }
