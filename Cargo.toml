@@ -36,7 +36,7 @@ optional = true
 features = ["parking_lot", "env-filter", "time"]
 
 [dependencies.tracing]
-version = "0.1.36"
+version = "0.1.37"
 features = ["max_level_trace", "release_max_level_info"]
 
 [dependencies.serde]
