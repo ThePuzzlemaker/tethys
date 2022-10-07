@@ -31,7 +31,7 @@ version = "0.6.1"
 optional = true
 
 [dependencies.tracing-subscriber]
-version = "0.3.15"
+version = "0.3.16"
 optional = true
 features = ["parking_lot", "env-filter", "time"]
 
