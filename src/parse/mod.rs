@@ -94,6 +94,13 @@ pub enum Token {
     #[token("->")]
     Arrow,
 
+    #[regex("-?[0-9]+", |lex| parse_number(lex, 10))]
+    #[regex("0b[01]+", |lex| parse_number(lex, 2))]
+    #[regex("0x[0-9A-Fa-f]+", |lex| parse_number(lex, 16))]
+    #[regex("0d[0-9]+", |lex| parse_number(lex, 10))]
+    #[regex("0o[0-7]+", |lex| parse_number(lex, 8))]
+    Number(i64),
+
     #[regex("_[A-Za-z0-9_]+|[A-Za-z][A-Za-z0-9_]*", intern)]
     Ident(Symbol),
     #[regex("'_[A-Za-z0-9_]+|'[A-Za-z][A-Za-z0-9_]*", intern)]
@@ -107,6 +114,10 @@ pub enum Token {
 
 fn intern(lex: &mut Lexer<Token>) -> Symbol {
     Symbol::intern(lex.slice())
+}
+
+fn parse_number(lex: &mut Lexer<Token>, radix: u32) -> Result<i64, Token> {
+    i64::from_str_radix(lex.slice(), radix).map_err(|_| Token::Error)
 }
 
 impl Token {
@@ -125,6 +136,7 @@ impl Token {
             Token::Arrow => "`->`",
             Token::Ident(_) => "ident",
             Token::TyVar(_) => "type variable",
+            Token::Number(_) => "number",
             Token::Error => "invalid token",
         }
     }
@@ -154,6 +166,18 @@ pub fn parser(
                 symbol: s,
                 span: span.0,
             })
+        } else {
+            Err(Simple::expected_input_found(
+                span,
+                iter::once(Some(Token::TyVar(*EMPTY))),
+                Some(tok),
+            ))
+        }
+    });
+
+    let number = filter_map(|span: Span, tok| {
+        if let Token::Number(n) = tok {
+            Ok(n)
         } else {
             Err(Simple::expected_input_found(
                 span,
@@ -206,6 +230,7 @@ pub fn parser(
             .map_with_span(|ident, span| Expr::new(gcx, ExprKind::Name(ident), span))
             .or(just([Token::LParen, Token::RParen])
                 .map_with_span(|_, span| Expr::new(gcx, ExprKind::Unit, span)))
+            .or(number.map_with_span(|num, span| Expr::new(gcx, ExprKind::Number(num), span)))
             .or(expr
                 .clone()
                 .delimited_by(just(Token::LParen), just(Token::RParen)));

@@ -1,6 +1,6 @@
 //! This module implements Tethys's AST.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
 use calypso_base::symbol::Ident;
 use id_arena::Id;
@@ -74,6 +74,7 @@ pub enum ExprKind {
     Apply(Id<Expr>, Id<Expr>),
     Lambda(Ident, Id<Expr>),
     Let(Ident, Option<Id<Ty>>, Id<Expr>, Id<Expr>),
+    Number(i64),
     /// A placeholder for an expression that was not syntactically well-formed.
     Err,
 }
@@ -119,10 +120,12 @@ impl TyKind {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Res {
-    /// A primitive type, e.g. `Int`.
+    /// A primitive type, e.g. `Integer`.
     ///
     /// **Belongs to the type namespace.**
     PrimTy(PrimTy),
+    /// A primitive function, e.g. `add`
+    PrimFunc(PrimFunc),
     /// Corresponds to something defined in user code, with a unique [`AstId`].
     ///
     /// **Does not belong to a specific namespace.**
@@ -151,16 +154,21 @@ pub enum Res {
 impl Res {
     pub fn id(self) -> Option<AstId> {
         match self {
-            Res::PrimTy(_) | Res::Err => None,
+            Res::PrimTy(_) | Res::Err | Res::PrimFunc(_) => None,
             Res::Defn(_, id) | Res::Local(id) | Res::TyVar(id) => Some(id),
         }
     }
 }
 
-/// No primitive types except unit at the moment, and that's represented
-/// elsewhere
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum PrimTy {}
+pub enum PrimTy {
+    Integer,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PrimFunc {
+    Add,
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DefnKind {
@@ -186,7 +194,9 @@ impl Node {
         match self {
             Self::Item(id) => Some(gcx.arenas.ast.item(id).ident),
             Self::Expr(id) => match gcx.arenas.ast.expr(id).kind {
-                ExprKind::Unit | ExprKind::Apply(_, _) | ExprKind::Err => None,
+                ExprKind::Unit | ExprKind::Apply(_, _) | ExprKind::Err | ExprKind::Number(_) => {
+                    None
+                }
                 ExprKind::Name(ident)
                 | ExprKind::Lambda(ident, _)
                 | ExprKind::Let(ident, _, _, _) => Some(ident),
@@ -204,5 +214,81 @@ impl Node {
             Self::Expr(id) => gcx.arenas.ast.expr(id).id,
             Self::Ty(id) => gcx.arenas.ast.ty(id).id,
         }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Parentage {
+    pub map: HashMap<AstId, AstId>,
+}
+
+impl Parentage {
+    pub fn calculate(&mut self, gcx: &GlobalCtxt, items: &[Id<Item>]) {
+        fn helper(this: &mut Parentage, gcx: &GlobalCtxt, node: Node) {
+            let id = node.id(gcx);
+            match node {
+                Node::Item(item) => match gcx.arenas.ast.item(item).kind {
+                    ItemKind::Value(ty, expr) => {
+                        this.map.insert(Node::Ty(ty).id(gcx), id);
+                        this.map.insert(Node::Expr(expr).id(gcx), id);
+
+                        helper(this, gcx, Node::Ty(ty));
+                        helper(this, gcx, Node::Expr(expr));
+                    }
+                },
+                Node::Expr(expr) => match gcx.arenas.ast.expr(expr).kind {
+                    ExprKind::Unit => {}
+                    ExprKind::Name(_) => {}
+                    ExprKind::Number(_) => {}
+                    ExprKind::Apply(func, arg) => {
+                        this.map.insert(Node::Expr(func).id(gcx), id);
+                        this.map.insert(Node::Expr(arg).id(gcx), id);
+
+                        helper(this, gcx, Node::Expr(func));
+                        helper(this, gcx, Node::Expr(arg));
+                    }
+                    ExprKind::Lambda(_, expr) => {
+                        this.map.insert(Node::Expr(expr).id(gcx), id);
+
+                        helper(this, gcx, Node::Expr(expr));
+                    }
+                    ExprKind::Let(_, ty, val, expr_in) => {
+                        if let Some(ty) = ty {
+                            this.map.insert(Node::Ty(ty).id(gcx), id);
+
+                            helper(this, gcx, Node::Ty(ty));
+                        }
+
+                        this.map.insert(Node::Expr(val).id(gcx), id);
+                        this.map.insert(Node::Expr(expr_in).id(gcx), id);
+
+                        helper(this, gcx, Node::Expr(val));
+                        helper(this, gcx, Node::Expr(expr_in));
+                    }
+                    ExprKind::Err => {}
+                },
+                Node::Ty(ty) => match gcx.arenas.ast.ty(ty).kind {
+                    TyKind::Unit => {}
+                    TyKind::Name(_) => {}
+                    TyKind::Arrow(ty_a, ty_b) => {
+                        this.map.insert(Node::Ty(ty_a).id(gcx), id);
+                        this.map.insert(Node::Ty(ty_b).id(gcx), id);
+
+                        helper(this, gcx, Node::Ty(ty_a));
+                        helper(this, gcx, Node::Ty(ty_b));
+                    }
+                    TyKind::Forall(_, ty) => {
+                        this.map.insert(Node::Ty(ty).id(gcx), id);
+
+                        helper(this, gcx, Node::Ty(ty));
+                    }
+                    TyKind::Err => {}
+                },
+            }
+        }
+
+        items
+            .iter()
+            .for_each(move |id| helper(self, gcx, Node::Item(*id)));
     }
 }

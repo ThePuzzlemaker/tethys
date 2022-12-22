@@ -2,7 +2,6 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     hash::{BuildHasher, Hash, Hasher},
-    ptr,
 };
 
 use id_arena::{Arena, Id};

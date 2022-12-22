@@ -12,13 +12,24 @@ use id_arena::Id;
 use std::collections::HashMap;
 
 use crate::{
-    ast::{AstId, DefnKind, Expr, ExprKind, Item, ItemKind, Res, Ty, TyKind},
+    ast::{AstId, DefnKind, Expr, ExprKind, Item, ItemKind, PrimFunc, PrimTy, Res, Ty, TyKind},
     ctxt::{AstArenas, GlobalCtxt},
     diag::Diagnostic,
     error::TysResult,
     parse::Span,
 };
 
+/// Resolved name mappings generated during a resolution pass.
+///
+/// As multiple [`AstId`]s can map to a single resolved name, such as in `\x.f x
+/// x`, where each `x` has a different id, but refers to the same definition,
+/// this data structure uses a vector and map-to-vector-index to prevent wasting
+/// space--in the future, [`Res`]olution data will likely be slightly more
+/// expensive to store (due to module paths and whatnot, which will likely be
+/// added at some point in the future).
+///
+/// Note that only ids referring to [`ExprKind::Name`] or [`TyKind::Name`] are
+/// assigned resolution data.
 #[derive(Debug, Default)]
 pub struct ResolutionData {
     ast_id_to_res_idx: HashMap<AstId, usize>,
@@ -157,6 +168,8 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                         .find(|(_, sym)| *sym == var.symbol)
                     {
                         Res::TyVar(*id)
+                    } else if var.as_str() == "Integer" {
+                        Res::PrimTy(PrimTy::Integer)
                     } else {
                         let report =
                             Diagnostic::build(ReportKind::Error, (), ty.span.lo() as usize)
@@ -199,6 +212,7 @@ impl<'gcx> ResolutionCtxt<'gcx> {
         let expr = self.arena.expr(expr);
         match expr.kind {
             ExprKind::Unit => (),
+            ExprKind::Number(_) => (),
             ExprKind::Name(var) => {
                 // we reverse here because we want the closest binder, not the
                 // furthest, and we push at the back.
@@ -211,6 +225,8 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                     Res::Local(*id)
                 } else if let Some(defn) = self.defn_names.get(&var) {
                     Res::Defn(DefnKind::Value, *defn)
+                } else if var.as_str() == "add" {
+                    Res::PrimFunc(PrimFunc::Add)
                 } else {
                     let report = Diagnostic::build(ReportKind::Error, (), expr.span.lo() as usize)
                         .with_message(format!("cannot find value `{}` in this scope", var.symbol))

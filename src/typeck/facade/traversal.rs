@@ -27,7 +27,6 @@ impl TyFoldable for Ty {
         let self_kind = self.kind(folder.gcx());
         let kind = match self_kind {
             TyKind::Unit | TyKind::Err => todo!(),
-            TyKind::Bound(_, _) => todo!(),
             TyKind::Rigid(_) => todo!(),
             TyKind::Free(_) => todo!(),
             TyKind::Arrow(inp, out) => {
@@ -35,6 +34,7 @@ impl TyFoldable for Ty {
             }
             TyKind::Hole(_) => todo!(),
             TyKind::Forall(_, _) => todo!(),
+            TyKind::Bound(_) => todo!(),
         };
 
         Ok(if self_kind == kind {

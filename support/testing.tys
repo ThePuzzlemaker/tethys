@@ -1,0 +1,2 @@
+def inc : Integer -> Integer
+        = \num.add num 1

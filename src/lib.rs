@@ -3,9 +3,9 @@ use std::{fmt, rc::Rc};
 use ariadne::Source;
 use ctxt::GlobalCtxt;
 use error::TysResult;
-use typeck::facade::{Hole, HoleRef, SubstableForall, Ty, TyKind};
+use typeck::facade::{Hole, HoleRef, Ty, TyKind};
 
-use crate::typeck::TypeckCtxt;
+use crate::typeck::{facade::instantiate, TypeckCtxt};
 
 pub mod ast;
 pub mod ctxt;
@@ -19,6 +19,11 @@ mod typeck;
 
 pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> {
     let items = parse::run(src, gcx);
+    gcx.arenas
+        .ast
+        .parentage
+        .borrow_mut()
+        .calculate(gcx, &*items);
 
     let _rd = resolve::resolve_code_unit(gcx, &items)?;
     // let cu = lowering::lower_code_unit(gcx, decls)?;
@@ -33,25 +38,16 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
             fatal.eprint(Source::from(&src))?;
         }
 
-        println!("{:#?}", items);
-        println!("{:#?}", gcx.arenas.ast.res_data.borrow().to_hash_map());
-        println!("\n{:#?}", gcx);
+        // println!("{:#?}", items);
+        // println!("{:#?}", gcx.arenas.ast.res_data.borrow().to_hash_map());
+        // println!("\n{:#?}", gcx);
 
-        let item = gcx.arenas.ast.item(*items.first().unwrap());
-        let mut tyck = TypeckCtxt::new();
-        match item.kind {
-            ast::ItemKind::Value(ty, expr) => {
-                println!(
-                    "inferred: {:#?}",
-                    TyPp(gcx, typeck::infer(&mut tyck, gcx, expr))
-                );
-                let ty = typeck::facade::ast_ty_to_facade(gcx, &mut Vec::new(), ty);
-                println!("expected: {:#?}", TyPp(gcx, ty));
-                typeck::check(&mut tyck, gcx, expr, ty);
-            }
-        }
-        println!("\n{:#?}", gcx);
-        println!("\n{:#?}", tyck);
+        // let item = gcx.arenas.ast.item(*items.first().unwrap());
+        let mut tyck = TypeckCtxt::new(gcx);
+        typeck::check_item(&mut tyck, gcx, *items.first().unwrap());
+
+        // println!("\n{:#?}", gcx);
+        // println!("\n{:#?}", tyck);
     }
 
     Ok(())
@@ -87,33 +83,30 @@ impl<'a> fmt::Debug for HolePp<'a> {
     }
 }
 
-struct SubstPp<'a>(&'a GlobalCtxt, SubstableForall);
-impl<'a> fmt::Debug for SubstPp<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let ty = typeck::facade::ast_ty_to_facade(self.0, &mut Vec::new(), self.1.ty);
-        f.debug_struct("SubstableForall")
-            .field(
-                "env",
-                &self
-                    .1
-                    .env
-                    .iter()
-                    .map(|(sym, ty)| (*sym, TyPp(self.0, *ty)))
-                    .collect::<Vec<_>>(),
-            )
-            .field("ty", &TyPp(self.0, ty))
-            .finish()
-    }
-}
+// struct SubstPp<'a>(&'a GlobalCtxt, SubstableForall);
+// impl<'a> fmt::Debug for SubstPp<'a> {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         let ty = typeck::facade::ast_ty_to_facade(self.0, &mut Vec::new(), self.1.ty);
+//         f.debug_struct("SubstableForall")
+//             .field(
+//                 "env",
+//                 &self
+//                     .1
+//                     .env
+//                     .iter()
+//                     .map(|(sym, ty)| (*sym, TyPp(self.0, *ty)))
+//                     .collect::<Vec<_>>(),
+//             )
+//             .field("ty", &TyPp(self.0, ty))
+//             .finish()
+//     }
+// }
 
-struct TyPp<'a>(&'a GlobalCtxt, Ty);
+pub struct TyPp<'a>(&'a GlobalCtxt, Ty);
 impl<'a> fmt::Debug for TyPp<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.1.kind(self.0) {
             TyKind::Unit => f.debug_tuple("Unit").finish(),
-            TyKind::Bound(idx, symbol) => {
-                f.debug_tuple("Bound").field(&idx).field(&symbol).finish()
-            }
             TyKind::Rigid(lvl) => f.debug_tuple("Rigid").field(&lvl).finish(),
             TyKind::Hole(h) => f
                 .debug_tuple("Hole")
@@ -126,12 +119,13 @@ impl<'a> fmt::Debug for TyPp<'a> {
                 .field(&TyPp(self.0, a))
                 .field(&TyPp(self.0, b))
                 .finish(),
-            TyKind::Forall(n, s) => f
+            TyKind::Forall(id, ty) => f
                 .debug_tuple("Forall")
-                .field(&n)
-                .field(&SubstPp(self.0, s))
+                .field(&id)
+                .field(&TyPp(self.0, ty))
                 .finish(),
             TyKind::Err => f.debug_tuple("Err").finish(),
+            TyKind::Bound(id) => f.debug_tuple("Bound").field(&id).finish(),
         }
     }
 }
