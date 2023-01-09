@@ -6,7 +6,7 @@ default-run = "tethys"
 rust-version = "1.59.0"
 
 [dependencies]
-typed-arena = "2.0.1"
+typed-arena = "2.0.2"
 chumsky = "0.8.0"
 ariadne = "0.1.5"
 logos = "0.12.1"
