@@ -19,14 +19,12 @@ mod typeck;
 
 pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> {
     let items = parse::run(src, gcx);
-    gcx.arenas
-        .ast
-        .parentage
-        .borrow_mut()
-        .calculate(gcx, &*items);
+    gcx.arenas.ast.parentage.borrow_mut().calculate(gcx, &items);
 
-    let _rd = resolve::resolve_code_unit(gcx, &items)?;
+    resolve::resolve_code_unit(gcx, &items)?;
     // let cu = lowering::lower_code_unit(gcx, decls)?;
+
+    println!("{:#?}\n{:#?}", items, gcx);
 
     if !suppress_output {
         let drcx = gcx.drcx.borrow();

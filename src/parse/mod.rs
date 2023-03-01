@@ -1,7 +1,13 @@
-use std::{fmt, iter};
+use std::{borrow::Cow, fmt, iter};
 
-use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
-use chumsky::{prelude::*, Stream};
+use ariadne::{Color, Fmt, Label, Report, ReportBuilder, ReportKind, Source};
+use chumsky::zero_copy::{
+    error::{Error, RichReason},
+    extra::Full,
+    input::{BoxedStream, Stream},
+    input::{Input, Spanned as ChumskySpanned},
+    prelude::*,
+};
 use id_arena::Id;
 use logos::{Lexer, Logos};
 
@@ -14,7 +20,9 @@ use crate::ast::{Expr, ExprKind, Item, ItemKind, Ty, TyKind};
 
 use crate::ctxt::GlobalCtxt;
 
-pub type SyntaxError = Simple<Token, Span>;
+pub type SyntaxError<'a, 'b> = Rich<'a, TysInput<'a, 'b>>;
+
+pub type TysInput<'a, 'b> = ChumskySpanned<Token, Span, &'a BoxedStream<'b, (Token, Span)>>;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Deref)]
 #[repr(transparent)]
@@ -32,7 +40,7 @@ impl From<span::Span> for Span {
     }
 }
 
-impl chumsky::Span for Span {
+impl chumsky::zero_copy::span::Span for Span {
     type Context = ();
 
     type Offset = u32;
@@ -142,128 +150,129 @@ impl Token {
     }
 }
 
-pub fn parser(
-    gcx: &'_ GlobalCtxt,
-) -> impl Parser<Token, Vec<Id<Item>>, Error = Simple<Token, Span>> + Clone + '_ {
-    let ident = filter_map(|span: Span, tok| {
+pub fn parser<'a, 'b: 'a>(
+    gcx: &'a GlobalCtxt,
+) -> impl Parser<'a, TysInput<'a, 'b>, Vec<Id<Item>>, Full<SyntaxError<'a, 'b>, (), ()>> + Clone + 'a
+{
+    let ident = any().try_map(|tok, span: Span| {
         if let Token::Ident(s) = tok {
             Ok(Ident {
                 symbol: s,
                 span: span.0,
             })
         } else {
-            Err(Simple::expected_input_found(
-                span,
+            Err(Rich::expected_found(
                 iter::once(Some(Token::Ident(*EMPTY))),
                 Some(tok),
+                span,
             ))
         }
     });
 
-    let tyvar = filter_map(|span: Span, tok| {
+    let tyvar = any().try_map(|tok, span: Span| {
         if let Token::TyVar(s) = tok {
             Ok(Ident {
                 symbol: s,
                 span: span.0,
             })
         } else {
-            Err(Simple::expected_input_found(
-                span,
+            Err(Rich::expected_found(
                 iter::once(Some(Token::TyVar(*EMPTY))),
                 Some(tok),
+                span,
             ))
         }
     });
 
-    let number = filter_map(|span: Span, tok| {
+    let number = any().try_map(|tok: Token, span: Span| {
         if let Token::Number(n) = tok {
             Ok(n)
         } else {
-            Err(Simple::expected_input_found(
-                span,
+            Err(Rich::expected_found(
                 iter::once(Some(Token::TyVar(*EMPTY))),
                 Some(tok),
+                span,
             ))
         }
     });
 
     let ty = recursive(|ty| {
-        let primary = ident
-            .map_with_span(|ident, span| Ty::new(gcx, TyKind::Name(ident), span))
-            .or(just([Token::LParen, Token::RParen])
-                .map_with_span(|_, span| Ty::new(gcx, TyKind::Unit, span)))
-            .or(ty
-                .clone()
-                .delimited_by(just(Token::LParen), just(Token::RParen)))
-            .or(tyvar.map_with_span(|ident, span| Ty::new(gcx, TyKind::Name(ident), span)));
+        let primary = choice((
+            ident.map_with_span(|ident, span| Ty::new(gcx, TyKind::Name(ident), span)),
+            just([Token::LParen, Token::RParen])
+                .map_with_span(|_, span| Ty::new(gcx, TyKind::Unit, span)),
+            ty.clone()
+                .delimited_by(just(Token::LParen), just(Token::RParen)),
+            tyvar.map_with_span(|ident, span| Ty::new(gcx, TyKind::Name(ident), span)),
+        ));
 
-        let arrow = primary
-            .clone()
-            .then(just(Token::Arrow).ignore_then(ty).repeated())
-            .foldl(|lhs, rhs| {
-                let sp = gcx
-                    .arenas
-                    .ast
-                    .ty(lhs)
-                    .span
-                    .with_hi(gcx.arenas.ast.ty(rhs).span.hi());
-                Ty::new(gcx, TyKind::Arrow(lhs, rhs), sp.into())
-            });
+        let arrow =
+            primary
+                .clone()
+                .foldl(just(Token::Arrow).ignore_then(ty).repeated(), |lhs, rhs| {
+                    let sp = gcx
+                        .arenas
+                        .ast
+                        .ty(lhs)
+                        .span
+                        .with_hi(gcx.arenas.ast.ty(rhs).span.hi());
+                    Ty::new(gcx, TyKind::Arrow(lhs, rhs), sp.into())
+                });
 
         let forall = just(Token::Forall)
-            .map_with_span(|_, sp| sp)
-            .then(tyvar.repeated())
+            .map_with_span(|_, sp: Span| sp)
+            .then(tyvar.repeated().collect::<Vec<_>>())
             .then_ignore(just(Token::Dot))
             .then(arrow.clone())
-            .map(|((sp, vars), ty)| (vars, (sp, ty)))
-            .foldr(|var, (sp, ty)| {
-                let sp = sp.with_hi(gcx.arenas.ast.ty(ty).span.hi()).into();
-                (sp, Ty::new(gcx, TyKind::Forall(var, ty), sp))
-            })
-            .map(|(_, ty)| ty);
+            .map(|((sp, vars), ty)| {
+                vars.into_iter()
+                    .rfold((sp, ty), |(sp, ty), var| {
+                        let sp = sp.with_hi(gcx.arenas.ast.ty(ty).span.hi()).into();
+                        (sp, Ty::new(gcx, TyKind::Forall(var, ty), sp))
+                    })
+                    .1
+            });
 
         forall.or(arrow)
     });
 
     let expr = recursive(|expr| {
-        let primary = ident
-            .map_with_span(|ident, span| Expr::new(gcx, ExprKind::Name(ident), span))
-            .or(just([Token::LParen, Token::RParen])
-                .map_with_span(|_, span| Expr::new(gcx, ExprKind::Unit, span)))
-            .or(number.map_with_span(|num, span| Expr::new(gcx, ExprKind::Number(num), span)))
-            .or(expr
-                .clone()
-                .delimited_by(just(Token::LParen), just(Token::RParen)));
+        let primary = choice((
+            ident.map_with_span(|ident, span| Expr::new(gcx, ExprKind::Name(ident), span)),
+            just([Token::LParen, Token::RParen])
+                .map_with_span(|_, span| Expr::new(gcx, ExprKind::Unit, span)),
+            number.map_with_span(|num, span| Expr::new(gcx, ExprKind::Number(num), span)),
+            expr.clone()
+                .delimited_by(just(Token::LParen), just(Token::RParen)),
+        ));
 
-        let appl = primary
-            .clone()
-            .then(primary.repeated())
-            .map(|(lhs, rhs)| (rhs.into_iter().rev(), lhs))
-            .foldr(|rhs, lhs| {
-                let sp = gcx
-                    .arenas
-                    .ast
-                    .expr(lhs)
-                    .span
-                    .with_hi(gcx.arenas.ast.expr(rhs).span.hi());
-                Expr::new(gcx, ExprKind::Apply(lhs, rhs), sp.into())
-            });
+        let appl = primary.clone().foldl(primary.repeated(), |lhs, rhs| {
+            let sp = gcx
+                .arenas
+                .ast
+                .expr(lhs)
+                .span
+                .with_hi(gcx.arenas.ast.expr(rhs).span.hi());
+            Expr::new(gcx, ExprKind::Apply(lhs, rhs), sp.into())
+        });
 
         let lambda = just(Token::Backslash)
-            .map_with_span(|_, span| span)
-            .then(ident.repeated())
+            .map_with_span(|_, span: Span| span)
+            .then(ident.repeated().collect::<Vec<_>>())
             .then_ignore(just(Token::Dot))
             .then(expr.clone())
-            .map(|((sp, vars), expr)| (vars, (sp, expr)))
-            .foldr(|var, (sp, expr)| {
-                let sp = sp.with_hi(gcx.arenas.ast.expr(expr).span.hi()).into();
-                (sp, Expr::new(gcx, ExprKind::Lambda(var, expr), sp))
+            .map(|((sp, vars), expr)| {
+                vars.into_iter()
+                    .rfold((sp, expr), |(sp, expr), var| {
+                        let sp = sp.with_hi(gcx.arenas.ast.expr(expr).span.hi()).into();
+                        (sp, Expr::new(gcx, ExprKind::Lambda(var, expr), sp))
+                    })
+                    .1
             })
-            .map(|(_, expr)| expr)
             .or(appl.clone());
 
         just(Token::Let)
-            .map_with_span(|_, span| span)
+            .map_with_span(|_, span: Span| span)
             .then(ident)
             .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
             .then_ignore(just(Token::Eq))
@@ -278,13 +287,14 @@ pub fn parser(
     });
 
     let item = just(Token::Def)
-        .map_with_span(|_, span| span)
+        .map_with_span(|_, span: Span| span)
         .then(ident)
         .then_ignore(just(Token::Colon))
         .then(ty)
         .then_ignore(just(Token::Eq))
         .then(expr)
         .repeated()
+        .collect::<Vec<_>>()
         .map(|vec| {
             vec.into_iter()
                 .map(|(((sp, name), ty), expr)| {
@@ -298,7 +308,7 @@ pub fn parser(
 }
 
 // TODO(@ThePuzzlemaker: diag): actually use DRCX for this
-pub fn run(src: &str, gcx: &GlobalCtxt) -> Vec<Id<Item>> {
+pub fn run<'a>(src: &'a str, gcx: &'a GlobalCtxt) -> Vec<Id<Item>> {
     let lex = Token::lexer(src).spanned().map(|(x, sp)| {
         (
             x,
@@ -306,78 +316,65 @@ pub fn run(src: &str, gcx: &GlobalCtxt) -> Vec<Id<Item>> {
         )
     });
     let srclen = src.len().try_into().unwrap();
-    let stream = Stream::from_iter(Span(span::Span::new(srclen, srclen + 1)), lex);
-    let (decls, parse_errs) = parser(gcx).parse_recovery(stream);
+    let stream = Stream::from_iter(lex).boxed();
+    let stream = stream.spanned(Span(span::Span::new(srclen, srclen + 1)));
+    let (decls, parse_errs) = parser(gcx).parse(stream).into_output_errors();
 
-    parse_errs
-        .into_iter()
-        .map(|e| e.map(|tok| tok.description().to_string()))
-        .for_each(|e| {
-            let report = Report::build(ReportKind::Error, (), e.span().lo() as usize);
+    parse_errs.into_iter().for_each(|e| {
+        let mut report = Report::build(ReportKind::Error, (), e.span().lo() as usize);
 
-            let report = match e.reason() {
-                chumsky::error::SimpleReason::Unclosed { span, delimiter } => report
-                    .with_message(format!(
-                        "Unclosed delimiter {}",
-                        delimiter.fg(Color::Yellow)
-                    ))
-                    .with_label(
-                        Label::new(*span)
-                            .with_message(format!(
-                                "Unclosed delimiter {}",
-                                delimiter.fg(Color::Yellow)
-                            ))
-                            .with_color(Color::Yellow),
-                    )
-                    .with_label(
-                        Label::new(e.span())
-                            .with_message(format!(
-                                "Must be closed before this {}",
-                                e.found()
-                                    .unwrap_or(&"end of file".to_string())
-                                    .fg(Color::Red)
-                            ))
-                            .with_color(Color::Red),
-                    ),
-                chumsky::error::SimpleReason::Unexpected => report
-                    .with_message(format!(
-                        "{}, expected {}",
-                        if e.found().is_some() {
-                            "Unexpected token in input"
-                        } else {
-                            "Unexpected end of input"
-                        },
-                        if e.expected().len() == 0 {
-                            "end of input".to_string()
-                        } else {
-                            e.expected()
-                                .map(|x| {
-                                    x.as_ref()
-                                        .map(|x| x.to_string())
-                                        .unwrap_or_else(|| "end of input".to_string())
-                                })
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        }
-                    ))
-                    .with_label(
-                        Label::new(e.span())
-                            .with_message(format!(
-                                "Unexpected token {}",
-                                e.found()
-                                    .unwrap_or(&"end of file".to_string())
-                                    .fg(Color::Red)
-                            ))
-                            .with_color(Color::Red),
-                    ),
-                chumsky::error::SimpleReason::Custom(msg) => report.with_message(msg).with_label(
-                    Label::new(e.span())
-                        .with_message(format!("{}", msg.fg(Color::Red)))
-                        .with_color(Color::Red),
-                ),
-            };
+        report = render_diagnostic(e.reason(), e.span(), report);
 
-            report.finish().print(Source::from(&src)).unwrap();
-        });
+        report.finish().print(Source::from(&src)).unwrap();
+    });
     decls.unwrap_or_default()
+}
+
+fn render_diagnostic<'a, 'b: 'a>(
+    e: &RichReason<'a, TysInput<'a, 'b>>,
+    span: Span,
+    mut report: ReportBuilder<Span>,
+) -> ReportBuilder<Span> {
+    match e {
+        RichReason::Custom(msg) => report.with_message(msg).with_label(
+            Label::new(span)
+                .with_message(format!("{}", msg.fg(Color::Red)))
+                .with_color(Color::Red),
+        ),
+        RichReason::ExpectedFound { expected, found } => report
+            .with_message(format!(
+                "{}, expected one of: [{}]",
+                if let Some(found) = found {
+                    Cow::from(format!("Unexpected token `{}`", found.description()))
+                } else {
+                    Cow::from("Unexpected end of input")
+                },
+                if expected.is_empty() {
+                    Cow::from("end of input")
+                } else {
+                    Cow::from(
+                        expected
+                            .into_iter()
+                            .map(|x| {
+                                x.as_ref()
+                                    .map(|x| x.description().to_string())
+                                    .unwrap_or_else(|| "end of input".to_string())
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )
+                },
+            ))
+            .with_label(
+                Label::new(span)
+                    .with_message("didn't expect this token".fg(Color::Red))
+                    .with_color(Color::Red),
+            ),
+        RichReason::Many(vec) => {
+            for reason in vec {
+                report = render_diagnostic(&reason, span, report);
+            }
+            report
+        }
+    }
 }

@@ -3,11 +3,10 @@ name = "tethys"
 version = "0.1.0"
 edition = "2021"
 default-run = "tethys"
-rust-version = "1.59.0"
+rust-version = "1.66.1"
 
 [dependencies]
 typed-arena = "2.0.1"
-chumsky = "0.8.0"
 ariadne = "0.1.5"
 logos = "0.12.1"
 derive_more = "0.99.17"
@@ -19,6 +18,10 @@ stable-vec = "0.4.0"
 internment = "0.7.0"
 id-arena = "2.2.1"
 im = "15.1.0"
+
+[dependencies.chumsky]
+git = "https://github.com/zesterer/chumsky.git"
+branch = "zero-copy"
 
 [dependencies.calypso_base]
 git = "https://github.com/calypso-lang/calypso.git"
