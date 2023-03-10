@@ -17,7 +17,6 @@ struct Args {
     #[clap(long = "verbose")]
     verbose: bool,
     #[clap(required = true)]
-    #[clap(parse(from_str))]
     tests: Vec<PathBuf>,
 }
 
