@@ -4,7 +4,7 @@
 
 [tokei_loc]: https://img.shields.io/tokei/lines/github/ThePuzzlemaker/Tethys?style=flat-square
 
-[ci_badge]: https://img.shields.io/github/workflow/status/ThePuzzlemaker/Tethys/CI?style=flat-square
+[ci_badge]: https://img.shields.io/github/actions/workflow/status/ThePuzzlemaker/tethys/ci.yml?branch=main&style=flat-square
 [ci_link]: https://github.com/ThePuzzlemaker/Tethys/actions
 
 [license_badge]: https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square
