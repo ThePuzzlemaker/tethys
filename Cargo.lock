@@ -167,9 +167,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chumsky"
-version = "1.0.0-alpha.2"
+version = "1.0.0-alpha.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5dc9e45fe593fc72308d62b9f3bcded6d7a9fe77e4e4d971f765d23d8439e6e"
+checksum = "379cdc19530b72a1e76d94a350676eaea1455375533eb38f18dfa712f9996902"
 dependencies = [
  "hashbrown 0.13.2",
  "stacker",
