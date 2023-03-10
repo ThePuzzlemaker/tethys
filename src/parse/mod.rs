@@ -333,8 +333,8 @@ pub fn run<'a>(src: &'a str, gcx: &'a GlobalCtxt) -> Vec<Id<Item>> {
 fn render_diagnostic<'a>(
     e: &RichReason<'a, Token>,
     span: Span,
-    mut report: ReportBuilder<Span>,
-) -> ReportBuilder<Span> {
+    mut report: ReportBuilder<'static, Span>,
+) -> ReportBuilder<'static, Span> {
     match e {
         RichReason::Custom(msg) => report.with_message(msg).with_label(
             Label::new(span)

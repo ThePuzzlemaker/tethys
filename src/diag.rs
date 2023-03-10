@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::parse::Span;
 
-pub type Diagnostic = ariadne::Report<Span>;
+pub type Diagnostic = ariadne::Report<'static, Span>;
 
 /// The global reporting context for diagnostics.
 pub struct DiagReportCtxt {
