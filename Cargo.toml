@@ -6,7 +6,7 @@ default-run = "tethys"
 rust-version = "1.66.1"
 
 [dependencies]
-ariadne = "0.1.5"
+ariadne = "0.2.0"
 logos = "0.12.1"
 derive_more = "0.99.17"
 pretty = "0.11.3"
