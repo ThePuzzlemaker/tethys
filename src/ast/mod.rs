@@ -1,11 +1,15 @@
 //! This module implements Tethys's AST.
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    cell::{Cell, RefCell},
+    collections::HashMap,
+};
 
 use calypso_base::symbol::Ident;
-use id_arena::Id;
+use id_arena::{Arena, Id};
 
-use crate::{ctxt::GlobalCtxt, parse::Span};
+use crate::{ctxt::GlobalCtxt, parse::Span, resolve::ResolutionData};
 
 pub const DUMMY_AST_ID: AstId = AstId { _raw: 0 };
 
@@ -290,5 +294,106 @@ impl Parentage {
         items
             .iter()
             .for_each(move |id| helper(self, gcx, Node::Item(*id)));
+    }
+}
+
+#[derive(Debug)]
+pub struct AstArenas {
+    pub expr: RefCell<Arena<Expr>>,
+    pub item: RefCell<Arena<Item>>,
+    pub ty: RefCell<Arena<Ty>>,
+    pub res_data: RefCell<ResolutionData>,
+    pub parentage: RefCell<Parentage>,
+    next_ast_id: Cell<u32>,
+    ast_id_to_node: RefCell<HashMap<AstId, Node>>,
+}
+
+impl AstArenas {
+    pub fn clear(&self) {
+        self.res_data.borrow_mut().clear();
+        self.next_ast_id.replace(1);
+        self.ast_id_to_node.borrow_mut().clear();
+    }
+
+    pub fn expr(&self, id: Id<Expr>) -> Expr {
+        self.expr.borrow()[id]
+    }
+
+    pub fn item(&self, id: Id<Item>) -> Item {
+        self.item.borrow()[id]
+    }
+
+    pub fn ty(&self, id: Id<Ty>) -> Ty {
+        self.ty.borrow()[id]
+    }
+
+    pub fn next_ast_id(&self) -> AstId {
+        let id = self.next_ast_id.get();
+        assert!(id < u32::MAX);
+        self.next_ast_id.replace(id + 1);
+        AstId::from_raw(id)
+    }
+
+    pub fn get_node_by_id(&self, id: AstId) -> Option<Node> {
+        self.ast_id_to_node.borrow().get(&id).copied()
+    }
+
+    pub fn into_iter_nodes(&self) -> impl Iterator<Item = Node> {
+        let v = self.ast_id_to_node.borrow();
+        v.values().copied().collect::<Vec<_>>().into_iter()
+    }
+
+    pub(crate) fn insert_node(&self, id: AstId, node: Node) {
+        self.ast_id_to_node.borrow_mut().insert(id, node);
+    }
+
+    // pub fn count_binders_between_tys(&self, root_binder: AstId, bound_var: AstId) -> usize {
+    //     let mut binders = 0;
+
+    //     let mut parentage = self.parentage.borrow();
+    //     println!("{:#?}", self);
+
+    //     let mut node = bound_var;
+    //     loop {
+    //         println!("count: {:?} {:?}", node, root_binder);
+    //         if node == root_binder {
+    //             break;
+    //         }
+
+    //         if let Some(parent) = parentage.scope_map.get(&node) {
+    //             match self.ast_id_to_node.borrow().get(&node) {
+    //                 Some(Node::Item(item)) => { /* does not bind types */ }
+    //                 Some(Node::Expr(expr)) => { /* does not bind types */ }
+    //                 Some(Node::Ty(ty)) => match self.ty(*ty).kind {
+    //                     ast::TyKind::Unit => {}
+    //                     ast::TyKind::Name(_) => {}
+    //                     ast::TyKind::Arrow(_, _) => {}
+    //                     ast::TyKind::Forall(_, _) => binders += 1,
+    //                     ast::TyKind::Err => {}
+    //                 },
+    //                 None => unreachable!(),
+    //             }
+
+    //             node = *parent;
+    //         } else {
+    //             panic!("count_binders_between_tys: root_binder was not an ancestor of bound_var");
+    //         }
+    //     }
+
+    //     binders
+    // }
+}
+
+impl Default for AstArenas {
+    fn default() -> Self {
+        Self {
+            expr: Default::default(),
+            item: Default::default(),
+            ty: Default::default(),
+            res_data: RefCell::new(ResolutionData::default()),
+            parentage: RefCell::new(Parentage::default()),
+            next_ast_id: Cell::new(1),
+            ast_id_to_node: RefCell::new(std::collections::HashMap::new()),
+        }
     }
 }

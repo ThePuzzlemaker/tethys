@@ -6,7 +6,6 @@ default-run = "tethys"
 rust-version = "1.66.1"
 
 [dependencies]
-typed-arena = "2.0.1"
 ariadne = "0.1.5"
 logos = "0.12.1"
 derive_more = "0.99.17"
@@ -18,10 +17,7 @@ stable-vec = "0.4.0"
 internment = "0.7.0"
 id-arena = "2.2.1"
 im = "15.1.0"
-
-[dependencies.chumsky]
-git = "https://github.com/zesterer/chumsky.git"
-branch = "zero-copy"
+chumsky = "1.0.0-alpha.2"
 
 [dependencies.calypso_base]
 git = "https://github.com/calypso-lang/calypso.git"

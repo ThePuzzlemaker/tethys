@@ -177,8 +177,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chumsky"
-version = "0.8.0"
-source = "git+https://github.com/zesterer/chumsky.git?branch=zero-copy#1867d2e4b35f62eefdd8d16f77a64797518b7ef3"
+version = "1.0.0-alpha.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5dc9e45fe593fc72308d62b9f3bcded6d7a9fe77e4e4d971f765d23d8439e6e"
 dependencies = [
  "hashbrown 0.13.2",
  "stacker",
@@ -1140,7 +1141,6 @@ dependencies = [
  "tower-lsp",
  "tracing",
  "tracing-subscriber",
- "typed-arena",
  "walkdir",
 ]
 

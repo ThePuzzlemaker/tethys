@@ -1,12 +1,13 @@
 use std::{borrow::Cow, fmt, iter};
 
 use ariadne::{Color, Fmt, Label, Report, ReportBuilder, ReportKind, Source};
-use chumsky::zero_copy::{
+use chumsky::{
     error::{Error, RichReason},
     extra::Full,
     input::{BoxedStream, Stream},
-    input::{Input, Spanned as ChumskySpanned},
+    input::{Input, SpannedInput},
     prelude::*,
+    MaybeRef,
 };
 use id_arena::Id;
 use logos::{Lexer, Logos};
@@ -20,9 +21,9 @@ use crate::ast::{Expr, ExprKind, Item, ItemKind, Ty, TyKind};
 
 use crate::ctxt::GlobalCtxt;
 
-pub type SyntaxError<'a, 'b> = Rich<'a, TysInput<'a, 'b>>;
+pub type SyntaxError<'a> = Rich<'a, Token, Span>;
 
-pub type TysInput<'a, 'b> = ChumskySpanned<Token, Span, &'a BoxedStream<'b, (Token, Span)>>;
+pub type TysInput<'a> = SpannedInput<Token, Span, BoxedStream<'a, (Token, Span)>>;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Deref)]
 #[repr(transparent)]
@@ -40,7 +41,7 @@ impl From<span::Span> for Span {
     }
 }
 
-impl chumsky::zero_copy::span::Span for Span {
+impl chumsky::span::Span for Span {
     type Context = ();
 
     type Offset = u32;
@@ -150,10 +151,9 @@ impl Token {
     }
 }
 
-pub fn parser<'a, 'b: 'a>(
+pub fn parser<'a>(
     gcx: &'a GlobalCtxt,
-) -> impl Parser<'a, TysInput<'a, 'b>, Vec<Id<Item>>, Full<SyntaxError<'a, 'b>, (), ()>> + Clone + 'a
-{
+) -> impl Parser<'a, TysInput<'a>, Vec<Id<Item>>, Full<SyntaxError<'a>, (), ()>> + Clone + 'a {
     let ident = any().try_map(|tok, span: Span| {
         if let Token::Ident(s) = tok {
             Ok(Ident {
@@ -161,9 +161,9 @@ pub fn parser<'a, 'b: 'a>(
                 span: span.0,
             })
         } else {
-            Err(Rich::expected_found(
-                iter::once(Some(Token::Ident(*EMPTY))),
-                Some(tok),
+            Err(<Rich<'_, _, _> as Error<'_, TysInput<'_>>>::expected_found(
+                iter::once(Some(MaybeRef::Val(Token::Ident(*EMPTY)))),
+                Some(MaybeRef::Val(tok)),
                 span,
             ))
         }
@@ -176,9 +176,9 @@ pub fn parser<'a, 'b: 'a>(
                 span: span.0,
             })
         } else {
-            Err(Rich::expected_found(
-                iter::once(Some(Token::TyVar(*EMPTY))),
-                Some(tok),
+            Err(<Rich<'_, _, _> as Error<'_, TysInput<'_>>>::expected_found(
+                iter::once(Some(MaybeRef::Val(Token::TyVar(*EMPTY)))),
+                Some(MaybeRef::Val(tok)),
                 span,
             ))
         }
@@ -188,9 +188,9 @@ pub fn parser<'a, 'b: 'a>(
         if let Token::Number(n) = tok {
             Ok(n)
         } else {
-            Err(Rich::expected_found(
-                iter::once(Some(Token::TyVar(*EMPTY))),
-                Some(tok),
+            Err(<Rich<'_, _, _> as Error<'_, TysInput<'_>>>::expected_found(
+                iter::once(Some(MaybeRef::Val(Token::TyVar(*EMPTY)))),
+                Some(MaybeRef::Val(tok)),
                 span,
             ))
         }
@@ -323,15 +323,15 @@ pub fn run<'a>(src: &'a str, gcx: &'a GlobalCtxt) -> Vec<Id<Item>> {
     parse_errs.into_iter().for_each(|e| {
         let mut report = Report::build(ReportKind::Error, (), e.span().lo() as usize);
 
-        report = render_diagnostic(e.reason(), e.span(), report);
+        report = render_diagnostic(e.reason(), *e.span(), report);
 
         report.finish().print(Source::from(&src)).unwrap();
     });
     decls.unwrap_or_default()
 }
 
-fn render_diagnostic<'a, 'b: 'a>(
-    e: &RichReason<'a, TysInput<'a, 'b>>,
+fn render_diagnostic<'a>(
+    e: &RichReason<'a, Token>,
     span: Span,
     mut report: ReportBuilder<Span>,
 ) -> ReportBuilder<Span> {
@@ -343,7 +343,7 @@ fn render_diagnostic<'a, 'b: 'a>(
         ),
         RichReason::ExpectedFound { expected, found } => report
             .with_message(format!(
-                "{}, expected one of: [{}]",
+                "{}, expected: {}",
                 if let Some(found) = found {
                     Cow::from(format!("Unexpected token `{}`", found.description()))
                 } else {
@@ -355,10 +355,14 @@ fn render_diagnostic<'a, 'b: 'a>(
                     Cow::from(
                         expected
                             .into_iter()
-                            .map(|x| {
-                                x.as_ref()
-                                    .map(|x| x.description().to_string())
-                                    .unwrap_or_else(|| "end of input".to_string())
+                            .map(|x| match x {
+                                chumsky::error::RichPattern::Token(tok) => {
+                                    Cow::from(tok.description())
+                                }
+                                chumsky::error::RichPattern::Label(l) => Cow::from(*l),
+                                chumsky::error::RichPattern::EndOfInput => {
+                                    Cow::from("end of input")
+                                }
                             })
                             .collect::<Vec<_>>()
                             .join(", "),

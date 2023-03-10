@@ -5,17 +5,17 @@ use ctxt::GlobalCtxt;
 use error::TysResult;
 use typeck::facade::{Hole, HoleRef, Ty, TyKind};
 
-use crate::typeck::{facade::instantiate, TypeckCtxt};
+use crate::typeck::TypeckCtxt;
 
 pub mod ast;
 pub mod ctxt;
 pub mod diag;
 pub mod error;
 pub mod infer;
-mod intern;
+pub mod intern;
 pub mod parse;
 pub mod resolve;
-mod typeck;
+pub mod typeck;
 
 pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> {
     let items = parse::run(src, gcx);

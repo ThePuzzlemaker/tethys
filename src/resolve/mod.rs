@@ -12,8 +12,11 @@ use id_arena::Id;
 use std::collections::HashMap;
 
 use crate::{
-    ast::{AstId, DefnKind, Expr, ExprKind, Item, ItemKind, PrimFunc, PrimTy, Res, Ty, TyKind},
-    ctxt::{AstArenas, GlobalCtxt},
+    ast::{
+        AstArenas, AstId, DefnKind, Expr, ExprKind, Item, ItemKind, PrimFunc, PrimTy, Res, Ty,
+        TyKind,
+    },
+    ctxt::GlobalCtxt,
     diag::Diagnostic,
     error::TysResult,
     parse::Span,
