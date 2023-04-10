@@ -7,7 +7,7 @@ rust-version = "1.66.1"
 
 [dependencies]
 ariadne = "0.2.0"
-logos = "0.12.1"
+logos = "0.13.0"
 derive_more = "0.99.17"
 pretty = "0.11.3"
 index_vec = "0.1.3"
