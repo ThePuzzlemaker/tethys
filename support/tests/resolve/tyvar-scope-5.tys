@@ -5,10 +5,10 @@
 def foo
   : forall 'a . 'a -> 'a
   = let id0 : 'a -> 'a
-    = let id1 : forall 'b . 'b -> 'b
-      = let id2 : 'b -> 'b = \x.x
-      in let id12 : 'a -> 'a
-        = id2
-        in id12
-    in id1
-  in id0
+        = let id1 : forall 'b . 'b -> 'b
+              = let id2 : 'b -> 'b = \x.x
+                    in let id12 : 'a -> 'a
+                                = id2
+                                in id12
+              in id1
+        in id0

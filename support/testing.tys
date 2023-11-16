@@ -1,2 +1,5 @@
 def inc : Integer -> Integer
-        = \num.add num 1
+        = (\x.x)(\num.add num 1)
+
+#def foo : () -> ()
+#    	= \_.()

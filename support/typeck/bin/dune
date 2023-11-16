@@ -1,0 +1,4 @@
+(executable
+ (public_name typeck)
+ (name main)
+ (libraries typeck))
