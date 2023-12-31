@@ -5,22 +5,22 @@
 ;;; Code:
 
 (defvar tethys-builtins
-  '("add" "Integer"))
+  '())
 
 (defvar tethys-keywords
-  '("def" "forall" "let" "in" "rec" "λ" "type"))
+  '("def" "forall" "let" "in" "rec" "λ" "type" "enum"))
 
 (defvar tethys-tab-width nil
   "Tab width for `tethys-mode'.")
 
 (defvar tethys-font-lock-defaults
   `(((":\\|->\\|\\.\\|\\\\\\|=" . font-lock-keyword-face)
-     ("_" . font-lock-constant-face)
      (,(regexp-opt tethys-builtins 'words) . font-lock-builtin-face)
      (,(regexp-opt tethys-keywords 'words) . font-lock-constant-face)
+     ("\\<_?[A-Z][A-Za-z0-9_]*\\>" . font-lock-type-face)
+     ("\\<_?[a-z][A-Za-z0-9_]*\\>" . font-lock-variable-name-face)
+     ("_" . font-lock-constant-face)
      ("'[A-Za-z_][A-Za-z0-9_]*" . font-lock-type-face)
-     ("\\<[A-Z_][A-Za-z0-9_]*\\>" . font-lock-type-face)
-     ("\\<[a-z_][A-Za-z0-9_]*\\>" . font-lock-variable-name-face)
      ("[0-9]+" . font-lock-constant-face))))
 
 (define-derived-mode tethys-mode prog-mode "Tethys"
