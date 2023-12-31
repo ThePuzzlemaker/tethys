@@ -1,0 +1,9 @@
+def x : ()
+      = let x = 0 in
+	let y = 1 in
+	let z = add x y in
+	z
+
+def x : ()
+      = let y = λx.y x in
+        y
