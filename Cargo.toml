@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 default-run = "tethys"
 rust-version = "1.66.1"
+license = "BSD-3-Clause"
 
 [dependencies]
 ariadne = "0.3.0"

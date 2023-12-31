@@ -131,13 +131,6 @@ works well enough.
 - `support/`: Support files, including grammars, examples, tests,
   etc. See [its README](./support/README.md) for a bit more
   information.
-- `src/`: The source code.
-  - `Tethys.Elab`: Elaboration
-  - `Tethys.Syntax.Core`: Core calculus syntax, created during
-    elaboration.
-  - `Tethys.Syntax.Surface`: Surface syntax, created from parsing.
-- `app/`: Source code for the binary application.
-- `test/`: Soruce code for tests.
 
 ## License
 
