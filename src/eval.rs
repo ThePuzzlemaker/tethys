@@ -11,7 +11,7 @@ use crate::{
     ctxt::GlobalCtxt,
     parse::Span,
     typeck::{
-        ast::{DeBruijnLvl, Expr, ExprKind},
+        ast::{CoreAstId, DeBruijnLvl, Expr, ExprKind},
         norm::lvl2ix,
     },
 };
@@ -25,8 +25,8 @@ pub struct Closure(pub Env, pub Id<Expr>);
 #[derive(Debug)]
 pub enum VExpr {
     Unit,
-    Var(AstId, DeBruijnLvl),
-    Lam(AstId, Closure),
+    Var(CoreAstId, DeBruijnLvl),
+    Lam(CoreAstId, Ident, Closure),
     App(Rc<VExpr>, Rc<VExpr>),
     EnumConstructor {
         id: AstId,
@@ -71,7 +71,7 @@ fn eval_app(
         (VExpr::RecursionBarrier(_, v), _) if !ecx.norec => {
             eval_app(gcx, ecx, env, &v.upgrade().unwrap(), e2)
         }
-        (VExpr::Lam(_, c), _) => apply_closure(gcx, ecx, c.clone(), e2),
+        (VExpr::Lam(_, _, c), _) => apply_closure(gcx, ecx, c.clone(), e2),
         (
             &VExpr::EnumConstructor {
                 id,
@@ -205,26 +205,26 @@ pub fn eval_expr(gcx: &GlobalCtxt, ecx: &mut EvalCtx, env: Env, expr: Id<Expr>) 
     match gcx.arenas.core.expr(expr).kind {
         ExprKind::Unit => Rc::new(VExpr::Unit),
         ExprKind::Var(_, i) => env.get(i.index()).unwrap().clone(),
-        ExprKind::Lam(x, b) => Rc::new(VExpr::Lam(x, Closure(env.clone(), b))),
+        ExprKind::Lam(x, i, b) => Rc::new(VExpr::Lam(x, i, Closure(env.clone(), b))),
         ExprKind::App(f, x) => {
             let f = eval_expr(gcx, ecx, env.clone(), f);
             let x = eval_expr(gcx, ecx, env.clone(), x);
             let x = force_barrier(ecx, x);
             eval_app(gcx, ecx, env.clone(), &f, &x)
         }
-        ExprKind::Let(x, _, e1, e2) => {
+        ExprKind::Let(x, i, _, e1, e2) => {
             let e1 = eval_expr(gcx, ecx, env.clone(), e1);
             let e1 = force_barrier(ecx, e1);
             eval_app(
                 gcx,
                 ecx,
                 env.clone(),
-                &Rc::new(VExpr::Lam(x, Closure(env.clone(), e2))),
+                &Rc::new(VExpr::Lam(x, i, Closure(env.clone(), e2))),
                 &e1,
             )
         }
-        ExprKind::Fix(_, _) => todo!(),
-        ExprKind::TyAbs(_, e) | ExprKind::TyApp(e, _) => eval_expr(gcx, ecx, env, e),
+        ExprKind::Fix(_, _, _) => todo!(),
+        ExprKind::TyAbs(_, _, e) | ExprKind::TyApp(e, _) => eval_expr(gcx, ecx, env, e),
         ExprKind::Free(id) => {
             if ecx.norec {
                 return Rc::new(VExpr::Free(id));
@@ -274,39 +274,76 @@ pub fn quote_expr(
 ) -> Id<Expr> {
     let sp = Span((u32::MAX..u32::MAX).into());
     match &*expr {
-        VExpr::Unit => Expr::new(gcx, ExprKind::Unit, sp),
-        VExpr::Var(id, lvl) => Expr::new(gcx, ExprKind::Var(*id, lvl2ix(l, *lvl)), sp),
-        VExpr::Lam(x, b) => {
+        VExpr::Unit => Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Unit, sp),
+        VExpr::Var(id, lvl) => Expr::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            ExprKind::Var(*id, lvl2ix(l, *lvl)),
+            sp,
+        ),
+        VExpr::Lam(x, i, b) => {
             ecx.norec = true;
             let b = apply_closure(gcx, ecx, b.clone(), &Rc::new(VExpr::Var(*x, l)));
             ecx.norec = false;
-            Expr::new(gcx, ExprKind::Lam(*x, quote_expr(gcx, ecx, l + 1, b)), sp)
+            Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                ExprKind::Lam(*x, *i, quote_expr(gcx, ecx, l + 1, b)),
+                sp,
+            )
         }
         VExpr::App(f, x) => {
             let f = quote_expr(gcx, ecx, l, f.clone());
             let x = quote_expr(gcx, ecx, l, x.clone());
-            Expr::new(gcx, ExprKind::App(f, x), sp)
+            Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::App(f, x), sp)
         }
         VExpr::EnumConstructor {
             id, branch, vector, ..
         }
         | VExpr::EnumValue(id, branch, vector) => vector.iter().cloned().fold(
-            Expr::new(gcx, ExprKind::EnumConstructor(*id, *branch), sp),
-            |acc, x| Expr::new(gcx, ExprKind::App(acc, quote_expr(gcx, ecx, l, x)), sp),
+            Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                ExprKind::EnumConstructor(*id, *branch),
+                sp,
+            ),
+            |acc, x| {
+                Expr::new(
+                    gcx,
+                    gcx.arenas.core.next_id(),
+                    ExprKind::App(acc, quote_expr(gcx, ecx, l, x)),
+                    sp,
+                )
+            },
         ),
-        VExpr::EnumRecursor(id) => Expr::new(gcx, ExprKind::EnumRecursor(*id), sp),
+        VExpr::EnumRecursor(id) => Expr::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            ExprKind::EnumRecursor(*id),
+            sp,
+        ),
         VExpr::EnumRecursorEval {
             id, original_spine, ..
-        } => original_spine
-            .iter()
-            .cloned()
-            .fold(Expr::new(gcx, ExprKind::EnumRecursor(*id), sp), |acc, x| {
-                Expr::new(gcx, ExprKind::App(acc, quote_expr(gcx, ecx, l, x)), sp)
-            }),
-        VExpr::Free(id) => Expr::new(gcx, ExprKind::Free(*id), sp),
+        } => original_spine.iter().cloned().fold(
+            Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                ExprKind::EnumRecursor(*id),
+                sp,
+            ),
+            |acc, x| {
+                Expr::new(
+                    gcx,
+                    gcx.arenas.core.next_id(),
+                    ExprKind::App(acc, quote_expr(gcx, ecx, l, x)),
+                    sp,
+                )
+            },
+        ),
+        VExpr::Free(id) => Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Free(*id), sp),
         VExpr::RecursionBarrier(id, v) => {
             let _ = v.upgrade().unwrap();
-            Expr::new(gcx, ExprKind::Free(*id), sp)
+            Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Free(*id), sp)
         }
     }
 }

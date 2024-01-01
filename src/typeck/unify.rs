@@ -2,10 +2,10 @@ use std::rc::Rc;
 
 use id_arena::Id;
 
-use crate::{ast::AstId, ctxt::GlobalCtxt};
+use crate::ctxt::GlobalCtxt;
 
 use super::{
-    ast::{DeBruijnLvl, MetaEntry, MetaVar, Ty, TyKind},
+    ast::{CoreAstId, DeBruijnLvl, MetaEntry, MetaVar, Ty, TyKind},
     norm::{apply_ty_closure, force, lvl2ix, VSpine, VTy, VTyKind},
 };
 
@@ -69,7 +69,7 @@ fn rename_spine(
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UnifyError {
     Occurs,
-    Scope(AstId, DeBruijnLvl),
+    Scope(CoreAstId, DeBruijnLvl),
     SpineMismatch,
     RigidMismatch,
 }
@@ -87,33 +87,46 @@ fn rename(
         Flex(m1, _) if Rc::ptr_eq(&m1.0, &m.0) => return Err(UnifyError::Occurs),
         Flex(m1, sp) => Ty::new(
             gcx,
+            gcx.arenas.core.next_id(),
             TyKind::Meta(m1, rename_spine(gcx, m, pren, sp)?),
             t.span,
         ),
         Rigid(x, l) => match pren.ren.get(&l) {
             None => return Err(UnifyError::Scope(x, l)),
-            Some(l1) => Ty::new(gcx, TyKind::Var(x, lvl2ix(pren.dom, *l1)), t.span),
+            Some(l1) => Ty::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                TyKind::Var(x, lvl2ix(pren.dom, *l1)),
+                t.span,
+            ),
         },
-        Unit => Ty::new(gcx, TyKind::Unit, t.span),
+        Unit => Ty::new(gcx, t.id, TyKind::Unit, t.span),
         Arrow(a, b) => Ty::new(
             gcx,
+            gcx.arenas.core.next_id(),
             TyKind::Arrow(
                 rename(gcx, m.clone(), pren.clone(), a)?,
                 rename(gcx, m, pren, b)?,
             ),
             t.span,
         ),
-        Free(x) => Ty::new(gcx, TyKind::Free(x), t.span),
-        Forall(x, c) => {
-            let vc = apply_ty_closure(gcx, c, VTy::rigid(gcx, x, pren.cod));
+        Free(x) => Ty::new(gcx, gcx.arenas.core.next_id(), TyKind::Free(x), t.span),
+        Forall(x, i, c) => {
+            let vc = apply_ty_closure(
+                gcx,
+                c,
+                VTy::rigid(gcx, gcx.arenas.core.next_id(), x, pren.cod),
+            );
             Ty::new(
                 gcx,
-                TyKind::Forall(x, rename(gcx, m, lift_ren(pren), vc)?),
+                gcx.arenas.core.next_id(),
+                TyKind::Forall(x, i, rename(gcx, m, lift_ren(pren), vc)?),
                 t.span,
             )
         }
         Enum(x, spine) => Ty::new(
             gcx,
+            gcx.arenas.core.next_id(),
             TyKind::Enum(x, rename_spine(gcx, m, pren, spine)?),
             t.span,
         ),
@@ -184,9 +197,9 @@ pub fn unify(gcx: &GlobalCtxt, l: DeBruijnLvl, t: Id<VTy>, u: Id<VTy>) -> Result
             unify(gcx, l, a1, a2)?;
             unify(gcx, l, b1, b2)?;
         }
-        (Forall(x1, t1), Forall(x2, t2)) => {
-            let c1 = apply_ty_closure(gcx, t1, VTy::rigid(gcx, x1, l));
-            let c2 = apply_ty_closure(gcx, t2, VTy::rigid(gcx, x2, l));
+        (Forall(x1, _, t1), Forall(x2, _, t2)) => {
+            let c1 = apply_ty_closure(gcx, t1, VTy::rigid(gcx, gcx.arenas.core.next_id(), x1, l));
+            let c2 = apply_ty_closure(gcx, t2, VTy::rigid(gcx, gcx.arenas.core.next_id(), x2, l));
             unify(gcx, l + 1, c1, c2)?;
         }
         (Free(n1), Free(n2)) if n1 == n2 => {}

@@ -16,7 +16,7 @@ use crate::{
 };
 
 use self::{
-    ast::{DeBruijnLvl, MetaEntry, MetaInfo, MetaVar},
+    ast::{CoreAstId, DeBruijnLvl, MetaEntry, MetaInfo, MetaVar},
     norm::{apply_ty_closure, eval_ty, force, Env, VTy, VTyKind},
     unify::UnifyError,
 };
@@ -30,8 +30,8 @@ pub mod unify;
 pub struct TypeckCtxt {
     env: Env,
     lvl: DeBruijnLvl,
-    vals: im::Vector<(AstId, Id<VTy>)>,
-    tys: im::Vector<AstId>,
+    vals: im::Vector<(CoreAstId, Id<VTy>)>,
+    tys: im::Vector<CoreAstId>,
     ty_aliases: im::Vector<(AstId, Span)>,
     generic_params: im::Vector<(AstId, usize, Id<ast::Ty>)>,
 }
@@ -50,14 +50,15 @@ impl Default for TypeckCtxt {
 }
 
 impl TypeckCtxt {
-    pub fn bind_ty(mut self, gcx: &GlobalCtxt, id: AstId) -> Self {
-        self.env.push_back(VTy::rigid(gcx, id, self.lvl));
+    pub fn bind_ty(mut self, gcx: &GlobalCtxt, id: CoreAstId) -> Self {
+        self.env
+            .push_back(VTy::rigid(gcx, gcx.arenas.core.next_id(), id, self.lvl));
         self.lvl += 1;
         self.tys.push_back(id);
         self
     }
 
-    pub fn bind_val(mut self, id: AstId, ty: Id<VTy>) -> Self {
+    pub fn bind_val(mut self, id: CoreAstId, ty: Id<VTy>) -> Self {
         self.vals.push_back((id, ty));
         self
     }
@@ -65,6 +66,34 @@ impl TypeckCtxt {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ElabError;
+
+fn lower_ty(gcx: &GlobalCtxt, id: AstId, f: impl FnOnce(CoreAstId) -> Id<ast::Ty>) -> Id<ast::Ty> {
+    let id = gcx.arenas.core.lower_id(id);
+    gcx.arenas
+        .core
+        .get_node_by_id(id)
+        .map(|x| match x {
+            ast::Node::Ty(t) => t,
+            _ => panic!(),
+        })
+        .unwrap_or_else(|| f(id))
+}
+
+fn try_lower_ty(
+    gcx: &GlobalCtxt,
+    id: AstId,
+    f: impl FnOnce(CoreAstId) -> Result<Id<ast::Ty>, ElabError>,
+) -> Result<Id<ast::Ty>, ElabError> {
+    let id = gcx.arenas.core.lower_id(id);
+    gcx.arenas
+        .core
+        .get_node_by_id(id)
+        .map(|x| match x {
+            ast::Node::Ty(t) => Ok(t),
+            _ => panic!(),
+        })
+        .unwrap_or_else(|| f(id))
+}
 
 pub fn surf_ty_to_core(
     gcx: &GlobalCtxt,
@@ -85,7 +114,7 @@ pub fn surf_ty_to_core(
     use surf::TyKind as ST;
     let t = gcx.arenas.ast.ty(t);
     Ok(match t.kind {
-        ST::Unit => ast::Ty::new(gcx, CT::Unit, t.span),
+        ST::Unit => lower_ty(gcx, t.id, |id| ast::Ty::new(gcx, id, CT::Unit, t.span)),
         ST::Data(Ident { symbol, span }, spine) => {
             if symbol.as_str() == "_" {
                 let report = Report::build(ReportKind::Error, (), span.lo() as usize)
@@ -142,7 +171,9 @@ pub fn surf_ty_to_core(
 
                         gcx.drcx.borrow_mut().report_syncd(report.finish());
 
-                        return Ok(ast::Ty::new(gcx, CT::Enum(*id, im::Vector::new()), t.span));
+                        return Ok(lower_ty(gcx, t.id, |cid| {
+                            ast::Ty::new(gcx, cid, CT::Enum(*id, im::Vector::new()), t.span)
+                        }));
                     }
 
                     let mut spine = spine
@@ -263,6 +294,7 @@ pub fn surf_ty_to_core(
                             let mv = fresh_meta(
                                 gcx,
                                 tcx.lvl,
+                                gcx.arenas.core.next_id(),
                                 Symbol::intern(&format!("?{}", i.as_str())),
                                 t.span,
                                 t.span,
@@ -271,7 +303,11 @@ pub fn surf_ty_to_core(
                         }
                     }
 
-                    ast::Ty::new(gcx, CT::Enum(*id, spine), t.span)
+                    // Never memoize this, by creating a new type every time.
+                    // This way generic params aren't fixed forever.
+                    // TODO: find a way to *sometimes* memoize so we
+                    // can have proper AstId->CoreAstId mappings
+                    ast::Ty::new(gcx, gcx.arenas.core.next_id(), CT::Enum(*id, spine), t.span)
                 }
                 _ => {
                     todo!()
@@ -280,13 +316,16 @@ pub fn surf_ty_to_core(
         }
         ST::Name(Ident { symbol, span }) => {
             if symbol.as_str() == "_" {
-                return Ok(fresh_meta(
-                    gcx,
-                    tcx.lvl,
-                    Symbol::intern_static("?_"),
-                    Span(span),
-                    Span(span),
-                ));
+                return Ok(lower_ty(gcx, t.id, |cid| {
+                    fresh_meta(
+                        gcx,
+                        tcx.lvl,
+                        cid,
+                        Symbol::intern_static("?_"),
+                        Span(span),
+                        Span(span),
+                    )
+                }));
             } else if symbol.as_str() == "'_" {
                 let report = Report::build(ReportKind::Error, (), span.lo() as usize)
                     .with_message("invalid identifier `'_`")
@@ -301,13 +340,16 @@ pub fn surf_ty_to_core(
                     .finish();
                 gcx.drcx.borrow_mut().report_syncd(report);
 
-                return Ok(fresh_meta(
-                    gcx,
-                    tcx.lvl,
-                    Symbol::intern_static("?'_"),
-                    Span(span),
-                    Span(span),
-                ));
+                return Ok(lower_ty(gcx, t.id, |cid| {
+                    fresh_meta(
+                        gcx,
+                        tcx.lvl,
+                        cid,
+                        Symbol::intern_static("?'_"),
+                        Span(span),
+                        Span(span),
+                    )
+                }));
             }
 
             let res_data = gcx.arenas.ast.res_data.borrow();
@@ -376,6 +418,7 @@ pub fn surf_ty_to_core(
                             let mv = fresh_meta(
                                 gcx,
                                 tcx.lvl,
+                                gcx.arenas.core.next_id(),
                                 Symbol::intern(&format!("?{}", i.as_str())),
                                 t.span,
                                 t.span,
@@ -384,7 +427,9 @@ pub fn surf_ty_to_core(
                         }
                     };
 
-                    ast::Ty::new(gcx, CT::Enum(*id, vec), t.span)
+                    lower_ty(gcx, t.id, |cid| {
+                        ast::Ty::new(gcx, cid, CT::Enum(*id, vec), t.span)
+                    })
                 }
                 Res::Defn(DefnKind::TyAlias, id) => {
                     let Some(Node::Item(i)) = gcx.arenas.ast.get_node_by_id(*id) else {
@@ -460,37 +505,49 @@ pub fn surf_ty_to_core(
                     }
                     // recreate the Ty with our span so we don't point
                     // unnecessarily to the expanded alias
-                    ast::Ty::new(
-                        gcx,
-                        gcx.arenas.core.ty(surf_ty_to_core(gcx, tcx, aliased)?).kind,
-                        t.span,
-                    )
+                    try_lower_ty(gcx, t.id, |cid| {
+                        Ok(ast::Ty::new(
+                            gcx,
+                            cid,
+                            gcx.arenas.core.ty(surf_ty_to_core(gcx, tcx, aliased)?).kind,
+                            t.span,
+                        ))
+                    })?
                 }
                 Res::TyVar(id) => {
+                    let id = gcx.arenas.core.lower_id(*id);
                     let pos = tcx
                         .tys
                         .iter()
                         .enumerate()
-                        .find_map(|(i, x)| if x == id { Some(i) } else { None })
+                        .find_map(|(i, x)| if *x == id { Some(i) } else { None })
                         .unwrap();
-                    ast::Ty::new(gcx, CT::Var(*id, DeBruijnIdx::from(pos)), t.span)
+                    lower_ty(gcx, t.id, |cid| {
+                        ast::Ty::new(gcx, cid, CT::Var(id, DeBruijnIdx::from(pos)), t.span)
+                    })
                 }
                 _ => unreachable!("{res:#?}"),
             }
         }
-        ST::Forall(_, b) => ast::Ty::new(
-            gcx,
-            CT::Forall(t.id, surf_ty_to_core(gcx, tcx.bind_ty(gcx, t.id), b)?),
-            t.span,
-        ),
-        ST::Arrow(a, b) => ast::Ty::new(
-            gcx,
-            CT::Arrow(
-                surf_ty_to_core(gcx, tcx.clone(), a)?,
-                surf_ty_to_core(gcx, tcx, b)?,
-            ),
-            t.span,
-        ),
+        ST::Forall(i, b) => try_lower_ty(gcx, t.id, |cid| {
+            Ok(ast::Ty::new(
+                gcx,
+                cid,
+                CT::Forall(cid, i, surf_ty_to_core(gcx, tcx.bind_ty(gcx, cid), b)?),
+                t.span,
+            ))
+        })?,
+        ST::Arrow(a, b) => try_lower_ty(gcx, t.id, |cid| {
+            Ok(ast::Ty::new(
+                gcx,
+                cid,
+                CT::Arrow(
+                    surf_ty_to_core(gcx, tcx.clone(), a)?,
+                    surf_ty_to_core(gcx, tcx, b)?,
+                ),
+                t.span,
+            ))
+        })?,
         ST::Err => panic!("ill-formed type"),
     })
 }
@@ -538,32 +595,42 @@ pub fn check(
     let t = gcx.arenas.tyck.vty(it);
     let e = gcx.arenas.ast.expr(ie);
     Ok(match (e.kind, t.kind) {
-        (_, VT::Forall(x, a)) => {
-            let a = apply_ty_closure(gcx, a, VTy::rigid(gcx, x, tcx.lvl));
+        (_, VT::Forall(x, i, a)) => {
+            let a = apply_ty_closure(
+                gcx,
+                a,
+                VTy::rigid(gcx, gcx.arenas.core.next_id(), x, tcx.lvl),
+            );
             let e1 = check(gcx, tcx.bind_ty(gcx, x), ie, a, type_expectation)?;
-            ast::Expr::new(gcx, CE::TyAbs(x, e1), e.span)
+            ast::Expr::new(gcx, gcx.arenas.core.next_id(), CE::TyAbs(x, i, e1), e.span)
         }
 
-        (SE::Lambda(_, e1), VT::Arrow(a, b)) => {
-            let e1 = check(gcx, tcx.bind_val(e.id, a), e1, b, type_expectation)?;
-            ast::Expr::new(gcx, CE::Lam(e.id, e1), e.span)
+        (SE::Lambda(i, e1), VT::Arrow(a, b)) => {
+            let cid = gcx.arenas.core.lower_id(e.id);
+
+            let e1 = check(gcx, tcx.bind_val(cid, a), e1, b, type_expectation)?;
+            ast::Expr::new(gcx, cid, CE::Lam(cid, i, e1), e.span)
         }
-        (SE::Let(_, Recursive::NotRecursive, None, e1, e2), _) => {
+        (SE::Let(i, Recursive::NotRecursive, None, e1, e2), _) => {
             let (e1, vt_e1) = infer(gcx, tcx.clone(), e1)?;
+            let cid = gcx.arenas.core.lower_id(e.id);
+
             let e2 = check(
                 gcx,
-                tcx.clone().bind_val(e.id, vt_e1),
+                tcx.clone().bind_val(cid, vt_e1),
                 e2,
                 it,
                 type_expectation,
             )?;
             let t_e1 = quote_ty(gcx, tcx.lvl, vt_e1);
 
-            ast::Expr::new(gcx, CE::Let(e.id, t_e1, e1, e2), e.span)
+            ast::Expr::new(gcx, cid, CE::Let(cid, i, t_e1, e1, e2), e.span)
         }
-        (SE::Let(_, Recursive::NotRecursive, Some(t_e1), e1, e2), _) => {
+        (SE::Let(i, Recursive::NotRecursive, Some(t_e1), e1, e2), _) => {
             let t_e1 = surf_ty_to_core(gcx, tcx.clone(), t_e1)?;
             let vt_e1 = eval_ty(gcx, tcx.env.clone(), t_e1);
+            let cid = gcx.arenas.core.lower_id(e.id);
+
             let e1 = check(
                 gcx,
                 tcx.clone(),
@@ -573,13 +640,13 @@ pub fn check(
             )?;
             let e2 = check(
                 gcx,
-                tcx.clone().bind_val(e.id, vt_e1),
+                tcx.clone().bind_val(cid, vt_e1),
                 e2,
                 it,
                 type_expectation,
             )?;
 
-            ast::Expr::new(gcx, CE::Let(e.id, t_e1, e1, e2), e.span)
+            ast::Expr::new(gcx, cid, CE::Let(cid, i, t_e1, e1, e2), e.span)
         }
         (_, _) => {
             let (e, inferred) = infer_and_inst(gcx, tcx.clone(), ie)?;
@@ -641,13 +708,13 @@ pub fn check(
                         report.add_label(
                             Label::new(
                                 gcx.arenas
-                                    .ast
+                                    .core
                                     .get_node_by_id(id)
                                     .unwrap()
                                     .span(gcx)
                                     .with_hi(
                                         gcx.arenas
-                                            .ast
+                                            .core
                                             .get_node_by_id(id)
                                             .unwrap()
                                             .ident(gcx)
@@ -730,14 +797,15 @@ pub fn infer(
     let e = gcx.arenas.ast.expr(ie);
     Ok(match e.kind {
         SE::Unit => (
-            ast::Expr::new(gcx, CE::Unit, e.span),
-            VTy::new(gcx, VT::Unit, e.span),
+            ast::Expr::new(gcx, gcx.arenas.core.lower_id(e.id), CE::Unit, e.span),
+            VTy::new(gcx, gcx.arenas.core.next_id(), VT::Unit, e.span),
         ),
         SE::Name(Ident { symbol, span }) => {
             if symbol.as_str() == "_" {
                 let ma = fresh_meta(
                     gcx,
                     tcx.lvl,
+                    gcx.arenas.core.next_id(),
                     Symbol::intern_static("?'_"),
                     e.span,
                     Span((u32::MAX..u32::MAX).into()),
@@ -746,6 +814,7 @@ pub fn infer(
                 return Ok((
                     ast::Expr::new(
                         gcx,
+                        gcx.arenas.core.lower_id(e.id),
                         CE::Err(ExprDeferredError::Discarded(ma, tcx.clone())),
                         Span(span),
                     ),
@@ -768,15 +837,8 @@ pub fn infer(
 
                     let dummy_span = Span((u32::MAX..u32::MAX).into());
 
-                    let syn_ids = generics
-                        .iter()
-                        .rev()
-                        .map(|x| {
-                            gcx.arenas
-                                .ast
-                                .syn(surf::Synthetic::new(gcx, dummy_span, Some(*x)))
-                                .id
-                        })
+                    let syn_ids = (0..generics.len())
+                        .map(|_| gcx.arenas.core.next_id())
                         .collect::<Vec<_>>();
                     let len = syn_ids.len();
                     let vars = syn_ids
@@ -789,6 +851,7 @@ pub fn infer(
                                 lvl,
                                 ast::Ty::new(
                                     gcx,
+                                    gcx.arenas.core.next_id(),
                                     CT::Var(syn_id, DeBruijnIdx::from(len - lvl - 1)),
                                     dummy_span,
                                 ),
@@ -811,21 +874,37 @@ pub fn infer(
                     let t = branch_tys.into_iter().rfold(
                         ast::Ty::new(
                             gcx,
+                            gcx.arenas.core.next_id(),
                             CT::Enum(*id, vars.clone().into_iter().map(|(_, _, x)| x).collect()),
                             dummy_span,
                         ),
-                        |acc, x| ast::Ty::new(gcx, CT::Arrow(x, acc), dummy_span),
+                        |acc, x| {
+                            ast::Ty::new(
+                                gcx,
+                                gcx.arenas.core.next_id(),
+                                CT::Arrow(x, acc),
+                                dummy_span,
+                            )
+                        },
                     );
 
+                    let t = syn_ids
+                        .iter()
+                        .copied()
+                        .zip(generics.iter().rev())
+                        .rfold(t, |acc, (x, i)| {
+                            ast::Ty::new(gcx, x, CT::Forall(x, *i, acc), dummy_span)
+                        });
+
+                    let t = eval_ty(gcx, im::Vector::new(), t);
                     (
-                        ast::Expr::new(gcx, CE::EnumConstructor(*id, *branch), e.span),
-                        eval_ty(
+                        ast::Expr::new(
                             gcx,
-                            im::Vector::new(),
-                            syn_ids.iter().copied().rfold(t, |acc, x| {
-                                ast::Ty::new(gcx, CT::Forall(x, acc), dummy_span)
-                            }),
+                            gcx.arenas.core.next_id(),
+                            CE::EnumConstructor(*id, *branch),
+                            e.span,
                         ),
+                        t,
                     )
                 }
                 Res::Defn(DefnKind::EnumRecursor, id) => {
@@ -845,12 +924,7 @@ pub fn infer(
                     let syn_ids = generics
                         .iter()
                         .rev()
-                        .map(|x| {
-                            gcx.arenas
-                                .ast
-                                .syn(surf::Synthetic::new(gcx, dummy_span, Some(*x)))
-                                .id
-                        })
+                        .map(|_| gcx.arenas.core.next_id())
                         .collect::<Vec<_>>();
                     let len = syn_ids.len() + 1;
                     let vars = syn_ids
@@ -863,6 +937,7 @@ pub fn infer(
                                 lvl,
                                 ast::Ty::new(
                                     gcx,
+                                    gcx.arenas.core.next_id(),
                                     CT::Var(syn_id, DeBruijnIdx::from(len - lvl - 1)),
                                     dummy_span,
                                 ),
@@ -872,6 +947,7 @@ pub fn infer(
 
                     let this = ast::Ty::new(
                         gcx,
+                        gcx.arenas.core.next_id(),
                         CT::Enum(id, vars.clone().into_iter().map(|(_, _, x)| x).collect()),
                         dummy_span,
                     );
@@ -880,15 +956,14 @@ pub fn infer(
                         symbol: Symbol::intern_static("'a"),
                         span: *dummy_span,
                     };
-                    // HACK: i hate this, use IR IDs
-                    let syn_id = gcx
-                        .arenas
-                        .ast
-                        .syn(surf::Synthetic::new(gcx, dummy_span, Some(var_id)))
-                        .id;
+                    let syn_id = gcx.arenas.core.next_id();
 
-                    let var =
-                        ast::Ty::new(gcx, CT::Var(syn_id, DeBruijnIdx::from(0usize)), dummy_span);
+                    let var = ast::Ty::new(
+                        gcx,
+                        gcx.arenas.core.next_id(),
+                        CT::Var(syn_id, DeBruijnIdx::from(0usize)),
+                        dummy_span,
+                    );
 
                     let t = cons
                         .into_iter()
@@ -907,29 +982,58 @@ pub fn infer(
                                 .collect::<Result<Vec<_>, _>>()?
                                 .into_iter()
                                 .rfold(var, |acc, x| {
-                                    ast::Ty::new(gcx, CT::Arrow(x, acc), dummy_span)
+                                    ast::Ty::new(
+                                        gcx,
+                                        gcx.arenas.core.next_id(),
+                                        CT::Arrow(x, acc),
+                                        dummy_span,
+                                    )
                                 }))
                         })
                         .collect::<Result<Vec<_>, _>>()?
                         .into_iter()
                         .rfold(var, |acc, x| {
-                            ast::Ty::new(gcx, CT::Arrow(x, acc), dummy_span)
+                            ast::Ty::new(
+                                gcx,
+                                gcx.arenas.core.next_id(),
+                                CT::Arrow(x, acc),
+                                dummy_span,
+                            )
                         });
 
                     let t = ast::Ty::new(
                         gcx,
-                        CT::Forall(syn_id, ast::Ty::new(gcx, CT::Arrow(this, t), dummy_span)),
+                        syn_id,
+                        CT::Forall(
+                            syn_id,
+                            var_id,
+                            ast::Ty::new(
+                                gcx,
+                                gcx.arenas.core.next_id(),
+                                CT::Arrow(this, t),
+                                dummy_span,
+                            ),
+                        ),
                         dummy_span,
                     );
 
                     (
-                        ast::Expr::new(gcx, CE::EnumRecursor(id), e.span),
+                        ast::Expr::new(
+                            gcx,
+                            gcx.arenas.core.lower_id(e.id),
+                            CE::EnumRecursor(id),
+                            e.span,
+                        ),
                         eval_ty(
                             gcx,
                             im::Vector::new(),
-                            syn_ids.iter().copied().rfold(t, |acc, x| {
-                                ast::Ty::new(gcx, CT::Forall(x, acc), dummy_span)
-                            }),
+                            syn_ids
+                                .iter()
+                                .copied()
+                                .zip(generics.iter().rev().copied())
+                                .rfold(t, |acc, (x, i)| {
+                                    ast::Ty::new(gcx, x, CT::Forall(x, i, acc), dummy_span)
+                                }),
                         ),
                     )
                 }
@@ -940,9 +1044,8 @@ pub fn infer(
                     let ItemKind::Value(t, _) = gcx.arenas.ast.item(i).kind else {
                         unreachable!()
                     };
-                    // TODO: memoize the surf_ty_to_core operation
                     (
-                        ast::Expr::new(gcx, CE::Free(*id), e.span),
+                        ast::Expr::new(gcx, gcx.arenas.core.lower_id(e.id), CE::Free(*id), e.span),
                         eval_ty(
                             gcx,
                             im::Vector::new(),
@@ -951,14 +1054,20 @@ pub fn infer(
                     )
                 }
                 Res::Local(id) => {
+                    let id = gcx.arenas.core.lower_id(*id);
                     let (pos, vt) = tcx
                         .vals
                         .iter()
                         .enumerate()
-                        .find_map(|(i, (x, t))| if x == id { Some((i, t)) } else { None })
+                        .find_map(|(i, (x, t))| if *x == id { Some((i, t)) } else { None })
                         .unwrap();
                     (
-                        ast::Expr::new(gcx, CE::Var(*id, DeBruijnIdx::from(pos)), e.span),
+                        ast::Expr::new(
+                            gcx,
+                            gcx.arenas.core.lower_id(e.id),
+                            CE::Var(id, DeBruijnIdx::from(pos)),
+                            e.span,
+                        ),
                         *vt,
                     )
                 }
@@ -974,6 +1083,7 @@ pub fn infer(
                     let ma = fresh_meta(
                         gcx,
                         tcx.lvl,
+                        gcx.arenas.core.next_id(),
                         Symbol::intern_static("?arg"),
                         e.span,
                         Span((u32::MAX..u32::MAX).into()),
@@ -982,6 +1092,7 @@ pub fn infer(
                     let mb = fresh_meta(
                         gcx,
                         tcx.lvl,
+                        gcx.arenas.core.next_id(),
                         Symbol::intern_static("?res"),
                         e.span,
                         Span((u32::MAX..u32::MAX).into()),
@@ -994,7 +1105,12 @@ pub fn infer(
                     if unify_check(
                         gcx,
                         tcx.clone(),
-                        VTy::new(gcx, VT::Arrow(a, b), Span((u32::MAX..u32::MAX).into())),
+                        VTy::new(
+                            gcx,
+                            gcx.arenas.core.next_id(),
+                            VT::Arrow(a, b),
+                            Span((u32::MAX..u32::MAX).into()),
+                        ),
                         tty,
                     )
                     .is_err()
@@ -1048,9 +1164,16 @@ pub fn infer(
             (
                 ast::Expr::new(
                     gcx,
+                    gcx.arenas.core.lower_id(e.id),
                     CE::App(
-                        mv.into_iter()
-                            .fold(t, |acc, x| ast::Expr::new(gcx, CE::TyApp(acc, x), e.span)),
+                        mv.into_iter().fold(t, |acc, x| {
+                            ast::Expr::new(
+                                gcx,
+                                gcx.arenas.core.next_id(),
+                                CE::TyApp(acc, x),
+                                e.span,
+                            )
+                        }),
                         u,
                     ),
                     e.span,
@@ -1062,31 +1185,40 @@ pub fn infer(
             let ma = fresh_meta(
                 gcx,
                 tcx.lvl,
+                gcx.arenas.core.next_id(),
                 Symbol::intern(&format!("?{}", x.as_str())),
                 e.span,
                 Span((u32::MAX..u32::MAX).into()),
             );
             let a = eval_ty(gcx, tcx.env.clone(), ma);
 
-            let (expr, b) = infer(gcx, tcx.bind_val(e.id, a), body)?;
+            let cid = gcx.arenas.core.lower_id(e.id);
+            let (expr, b) = infer(gcx, tcx.bind_val(cid, a), body)?;
             (
-                ast::Expr::new(gcx, CE::Lam(e.id, expr), e.span),
-                VTy::new(gcx, VT::Arrow(a, b), Span((u32::MAX..u32::MAX).into())),
+                ast::Expr::new(gcx, cid, CE::Lam(cid, x, expr), e.span),
+                VTy::new(
+                    gcx,
+                    gcx.arenas.core.next_id(),
+                    VT::Arrow(a, b),
+                    Span((u32::MAX..u32::MAX).into()),
+                ),
             )
         }
-        SE::Let(_, Recursive::NotRecursive, None, e1, e2) => {
+        SE::Let(x, Recursive::NotRecursive, None, e1, e2) => {
             let (e1, vt_e1) = infer(gcx, tcx.clone(), e1)?;
-            let (e2, vt_e2) = infer(gcx, tcx.clone().bind_val(e.id, vt_e1), e2)?;
+            let cid = gcx.arenas.core.lower_id(e.id);
+            let (e2, vt_e2) = infer(gcx, tcx.clone().bind_val(cid, vt_e1), e2)?;
             let t_e1 = quote_ty(gcx, tcx.lvl, vt_e1);
 
             (
-                ast::Expr::new(gcx, CE::Let(e.id, t_e1, e1, e2), e.span),
+                ast::Expr::new(gcx, cid, CE::Let(cid, x, t_e1, e1, e2), e.span),
                 vt_e2,
             )
         }
-        SE::Let(_, Recursive::NotRecursive, Some(t_e1), e1, e2) => {
+        SE::Let(x, Recursive::NotRecursive, Some(t_e1), e1, e2) => {
             let t_e1 = surf_ty_to_core(gcx, tcx.clone(), t_e1)?;
             let vt_e1 = eval_ty(gcx, tcx.env.clone(), t_e1);
+            let cid = gcx.arenas.core.lower_id(e.id);
             let e1 = check(
                 gcx,
                 tcx.clone(),
@@ -1094,10 +1226,10 @@ pub fn infer(
                 vt_e1,
                 TypeExpectation::Definition(gcx.arenas.core.ty(t_e1).span),
             )?;
-            let (e2, vt_e2) = infer(gcx, tcx.clone().bind_val(e.id, vt_e1), e2)?;
+            let (e2, vt_e2) = infer(gcx, tcx.clone().bind_val(cid, vt_e1), e2)?;
 
             (
-                ast::Expr::new(gcx, CE::Let(e.id, t_e1, e1, e2), e.span),
+                ast::Expr::new(gcx, cid, CE::Let(cid, x, t_e1, e1, e2), e.span),
                 vt_e2,
             )
         }
@@ -1116,7 +1248,12 @@ pub fn infer_and_inst(
 
     Ok((
         mv.into_iter().fold(e, |acc, x| {
-            ast::Expr::new(gcx, ast::ExprKind::TyApp(acc, x), sp)
+            ast::Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                ast::ExprKind::TyApp(acc, x),
+                sp,
+            )
         }),
         t,
     ))
@@ -1131,20 +1268,12 @@ pub fn eagerly_instantiate(
     let it = force(gcx, it);
     let t = gcx.arenas.tyck.vty(it);
     match t.kind {
-        VTyKind::Forall(x, c) => {
+        VTyKind::Forall(_, i, c) => {
             let mv = fresh_meta(
                 gcx,
                 tcx.lvl,
-                Symbol::intern(&format!(
-                    "?{}",
-                    gcx.arenas
-                        .ast
-                        .get_node_by_id(x)
-                        .unwrap()
-                        .ident(gcx)
-                        .unwrap()
-                        .as_str()
-                )),
+                gcx.arenas.core.next_id(),
+                Symbol::intern(&format!("?{}", i.as_str())),
                 sp,
                 t.span,
             );
@@ -1162,6 +1291,7 @@ pub fn eagerly_instantiate(
 fn fresh_meta(
     gcx: &GlobalCtxt,
     level: DeBruijnLvl,
+    cid: CoreAstId,
     name: Symbol,
     span: Span,
     ty_span: Span,
@@ -1170,5 +1300,5 @@ fn fresh_meta(
         MetaEntry::Unsolved,
         MetaInfo { level, name, span },
     ))));
-    ast::Ty::new(gcx, ast::TyKind::InsertedMeta(m), ty_span)
+    ast::Ty::new(gcx, cid, ast::TyKind::InsertedMeta(m), ty_span)
 }

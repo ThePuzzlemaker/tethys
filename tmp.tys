@@ -1,8 +1,8 @@
-enum List[T] = Nil
-     	     | Cons T List[T]
+enum List['T] = Nil
+     	      | Cons 'T List['T]
 
-enum Option[T] = None
-     	       | Some T
+enum Option['T] = None
+     	        | Some 'T
 
 def optMap : forall 'T 'U.Option['T] -> ('T -> 'U) -> Option['U]
     	   = λo f.Option o None (λt.Some (f t))

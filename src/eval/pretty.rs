@@ -49,7 +49,7 @@ pub fn pp_expr<'a>(
                 .unwrap()
                 .as_str(),
         ),
-        VExpr::Lam(x, body) => {
+        VExpr::Lam(x, _, body) => {
             let body = crate::typeck::pretty::pp_expr(
                 PREC_EXPR_LET,
                 gcx,
@@ -63,7 +63,7 @@ pub fn pp_expr<'a>(
                 RcDoc::text("λ")
                     .append(
                         gcx.arenas
-                            .ast
+                            .core
                             .get_node_by_id(*x)
                             .unwrap()
                             .ident(gcx)

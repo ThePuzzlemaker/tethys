@@ -36,7 +36,7 @@ pub fn pp_ty(
         TyKind::Unit => RcDoc::text("()"),
         TyKind::Var(id, _) => RcDoc::text(
             gcx.arenas
-                .ast
+                .core
                 .get_node_by_id(id)
                 .unwrap()
                 .ident(gcx)
@@ -88,23 +88,15 @@ pub fn pp_ty(
                     .group(),
             )
         }
-        TyKind::Forall(x, a) => {
-            e.push_back(VTy::rigid(gcx, x, l));
+        TyKind::Forall(x, i, a) => {
+            e.push_back(VTy::rigid(gcx, gcx.arenas.core.next_id(), x, l));
             let a = pp_ty(PREC_TY_FORALL, gcx, l + 1, e, a);
             maybe_paren(
                 prec,
                 PREC_TY_FORALL,
                 RcAllocator
                     .text("forall ")
-                    .append(
-                        gcx.arenas
-                            .ast
-                            .get_node_by_id(x)
-                            .unwrap()
-                            .ident(gcx)
-                            .unwrap()
-                            .as_str(),
-                    )
+                    .append(i.as_str())
                     .append(".")
                     .append(RcDoc::line())
                     .append(a.group())
@@ -183,7 +175,16 @@ pub fn pp_expr(
 ) -> RcDoc<'_> {
     match gcx.arenas.core.expr(expr).kind {
         ExprKind::Unit => RcDoc::text("()"),
-        ExprKind::Var(id, _) | ExprKind::Free(id) | ExprKind::EnumRecursor(id) => RcDoc::text(
+        ExprKind::Var(id, _) => RcDoc::text(
+            gcx.arenas
+                .core
+                .get_node_by_id(id)
+                .unwrap()
+                .ident(gcx)
+                .unwrap()
+                .as_str(),
+        ),
+        ExprKind::Free(id) | ExprKind::EnumRecursor(id) => RcDoc::text(
             gcx.arenas
                 .ast
                 .get_node_by_id(id)
@@ -204,23 +205,12 @@ pub fn pp_expr(
 
             RcDoc::text(ident.as_str())
         }
-        ExprKind::Lam(x, body) => {
+        ExprKind::Lam(_, i, body) => {
             let body = pp_expr(PREC_EXPR_LET, gcx, l, e, body);
             maybe_paren(
                 prec,
                 PREC_EXPR_LAMBDA,
-                RcDoc::text("λ")
-                    .append(
-                        gcx.arenas
-                            .ast
-                            .get_node_by_id(x)
-                            .unwrap()
-                            .ident(gcx)
-                            .unwrap()
-                            .as_str(),
-                    )
-                    .append(".")
-                    .append(body),
+                RcDoc::text("λ").append(i.as_str()).append(".").append(body),
             )
         }
         ExprKind::App(f, x) => {
@@ -237,7 +227,7 @@ pub fn pp_expr(
                     .into_doc(),
             )
         }
-        ExprKind::Let(x, t, e1, e2) => {
+        ExprKind::Let(_, i, t, e1, e2) => {
             let t = pp_ty(PREC_TY_FORALL, gcx, l, e.clone(), t);
             let e1 = pp_expr(PREC_EXPR_LET, gcx, l, e.clone(), e1);
             let e2 = pp_expr(PREC_EXPR_LET, gcx, l, e, e2);
@@ -255,15 +245,7 @@ pub fn pp_expr(
                 RcAllocator
                     .text("let")
                     .append(RcDoc::space())
-                    .append(
-                        gcx.arenas
-                            .ast
-                            .get_node_by_id(x)
-                            .unwrap()
-                            .ident(gcx)
-                            .unwrap()
-                            .as_str(),
-                    )
+                    .append(i.as_str())
                     .append(RcDoc::space())
                     .append(t.align())
                     .append(RcDoc::space())
@@ -291,27 +273,16 @@ pub fn pp_expr(
                     .into_doc(),
             )
         }
-        ExprKind::TyAbs(x, body) => {
-            e.push_back(VTy::rigid(gcx, x, l));
+        ExprKind::TyAbs(x, i, body) => {
+            e.push_back(VTy::rigid(gcx, gcx.arenas.core.next_id(), x, l));
             let body = pp_expr(PREC_EXPR_LET, gcx, l + 1, e, body);
             maybe_paren(
                 prec,
                 PREC_EXPR_LAMBDA,
-                RcDoc::text("Λ")
-                    .append(
-                        gcx.arenas
-                            .ast
-                            .get_node_by_id(x)
-                            .unwrap()
-                            .ident(gcx)
-                            .unwrap()
-                            .as_str(),
-                    )
-                    .append(".")
-                    .append(body),
+                RcDoc::text("Λ").append(i.as_str()).append(".").append(body),
             )
         }
-        ExprKind::Fix(_, _) => todo!(),
+        ExprKind::Fix(_, _, _) => todo!(),
         ExprKind::Err(_) => RcDoc::text("<error>"),
     }
 }

@@ -359,7 +359,7 @@ pub fn parser(
         .then(
             just(Token::LBracket)
                 .ignore_then(
-                    ident
+                    tyvar
                         .separated_by(just(Token::Comma))
                         .collect::<Vec<_>>()
                         .map(im::Vector::from),
