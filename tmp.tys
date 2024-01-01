@@ -33,3 +33,5 @@ def fact : Nat -> Nat
 
 def list : List[Nat] = (Cons Zero (Cons (Succ Zero) Nil))
 def main : _ = optBind (tl list) hd
+# def foo : () -> () = \x.foo ()
+# def main : () = foo ()

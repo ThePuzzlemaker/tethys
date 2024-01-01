@@ -40,7 +40,15 @@ pub fn pp_expr<'a>(
         VExpr::EnumConstructor {
             id, branch, vector, ..
         } => RcDoc::text(format!("<id={id},branch={branch},vector={vector:?}>")),
-        VExpr::Free(ident) => RcDoc::text(ident.as_str()),
+        VExpr::Free(id) => RcDoc::text(
+            gcx.arenas
+                .ast
+                .get_node_by_id(*id)
+                .unwrap()
+                .ident(gcx)
+                .unwrap()
+                .as_str(),
+        ),
         VExpr::Lam(x, body) => {
             let body = crate::typeck::pretty::pp_expr(
                 PREC_EXPR_LET,

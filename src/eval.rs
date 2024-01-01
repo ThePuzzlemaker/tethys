@@ -1,4 +1,7 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{
+    collections::HashMap,
+    rc::{Rc, Weak},
+};
 
 use calypso_base::symbol::Ident;
 use id_arena::Id;
@@ -43,16 +46,17 @@ pub enum VExpr {
         original_spine: im::Vector<Rc<VExpr>>,
         spine: im::Vector<Rc<VExpr>>,
     },
-    Free(Ident),
+    Free(AstId),
+    RecursionBarrier(AstId, Weak<VExpr>),
 }
 
 fn apply_closure(
     gcx: &GlobalCtxt,
     ecx: &mut EvalCtx,
     Closure(mut env, e1): Closure,
-    e2: Rc<VExpr>,
+    e2: &Rc<VExpr>,
 ) -> Rc<VExpr> {
-    env.push_back(e2);
+    env.push_back(e2.clone());
     eval_expr(gcx, ecx, env, e1)
 }
 
@@ -60,10 +64,13 @@ fn eval_app(
     gcx: &GlobalCtxt,
     ecx: &mut EvalCtx,
     env: Env,
-    e1: Rc<VExpr>,
-    e2: Rc<VExpr>,
+    e1: &Rc<VExpr>,
+    e2: &Rc<VExpr>,
 ) -> Rc<VExpr> {
-    match (&*e1, &*e2) {
+    match (&**e1, &**e2) {
+        (VExpr::RecursionBarrier(_, v), _) if !ecx.norec => {
+            eval_app(gcx, ecx, env, &v.upgrade().unwrap(), e2)
+        }
         (VExpr::Lam(_, c), _) => apply_closure(gcx, ecx, c.clone(), e2),
         (
             &VExpr::EnumConstructor {
@@ -157,7 +164,7 @@ fn eval_app(
                 unreachable!()
             }
         }
-        (_, _) => Rc::new(VExpr::App(e1, e2)),
+        (_, _) => Rc::new(VExpr::App(e1.clone(), e2.clone())),
     }
 }
 
@@ -166,14 +173,14 @@ fn recursor_spine(
     ecx: &mut EvalCtx,
     env: Env,
     spine: im::Vector<Rc<VExpr>>,
-    e2: Rc<VExpr>,
+    e2: &Rc<VExpr>,
 ) -> Rc<VExpr> {
     if spine.is_empty() {
         e2.clone()
     } else {
         let mut head = e2.clone();
         for val in spine {
-            head = eval_app(gcx, ecx, env.clone(), head, val);
+            head = eval_app(gcx, ecx, env.clone(), &head, &val);
         }
         head
     }
@@ -183,8 +190,17 @@ fn recursor_spine(
 pub struct EvalCtx {
     pub free: HashMap<AstId, Id<Expr>>,
     pub free_eval: HashMap<AstId, Rc<VExpr>>,
+    pub norec: bool,
 }
 
+fn force_barrier(ecx: &mut EvalCtx, e1: Rc<VExpr>) -> Rc<VExpr> {
+    match &*e1 {
+        VExpr::RecursionBarrier(_, v) if !ecx.norec => force_barrier(ecx, v.upgrade().unwrap()),
+        _ => e1.clone(),
+    }
+}
+
+// TODO: small-step so infinite loops don't overflow stack
 pub fn eval_expr(gcx: &GlobalCtxt, ecx: &mut EvalCtx, env: Env, expr: Id<Expr>) -> Rc<VExpr> {
     match gcx.arenas.core.expr(expr).kind {
         ExprKind::Unit => Rc::new(VExpr::Unit),
@@ -193,27 +209,32 @@ pub fn eval_expr(gcx: &GlobalCtxt, ecx: &mut EvalCtx, env: Env, expr: Id<Expr>) 
         ExprKind::App(f, x) => {
             let f = eval_expr(gcx, ecx, env.clone(), f);
             let x = eval_expr(gcx, ecx, env.clone(), x);
-            eval_app(gcx, ecx, env.clone(), f, x)
+            let x = force_barrier(ecx, x);
+            eval_app(gcx, ecx, env.clone(), &f, &x)
         }
         ExprKind::Let(x, _, e1, e2) => {
             let e1 = eval_expr(gcx, ecx, env.clone(), e1);
+            let e1 = force_barrier(ecx, e1);
             eval_app(
                 gcx,
                 ecx,
                 env.clone(),
-                Rc::new(VExpr::Lam(x, Closure(env.clone(), e2))),
-                e1,
+                &Rc::new(VExpr::Lam(x, Closure(env.clone(), e2))),
+                &e1,
             )
         }
         ExprKind::Fix(_, _) => todo!(),
         ExprKind::TyAbs(_, e) | ExprKind::TyApp(e, _) => eval_expr(gcx, ecx, env, e),
         ExprKind::Free(id) => {
+            if ecx.norec {
+                return Rc::new(VExpr::Free(id));
+            }
             if let Some(val) = ecx.free_eval.get(&id) {
-                val.clone()
+                Rc::new(VExpr::RecursionBarrier(id, Rc::downgrade(val)))
             } else if let Some(val) = ecx.free.get(&id) {
                 let v = eval_expr(gcx, ecx, im::Vector::new(), *val);
                 ecx.free_eval.insert(id, v.clone());
-                v
+                Rc::new(VExpr::RecursionBarrier(id, Rc::downgrade(&v)))
             } else {
                 unreachable!()
             }
@@ -256,7 +277,9 @@ pub fn quote_expr(
         VExpr::Unit => Expr::new(gcx, ExprKind::Unit, sp),
         VExpr::Var(id, lvl) => Expr::new(gcx, ExprKind::Var(*id, lvl2ix(l, *lvl)), sp),
         VExpr::Lam(x, b) => {
-            let b = apply_closure(gcx, ecx, b.clone(), Rc::new(VExpr::Var(*x, l)));
+            ecx.norec = true;
+            let b = apply_closure(gcx, ecx, b.clone(), &Rc::new(VExpr::Var(*x, l)));
+            ecx.norec = false;
             Expr::new(gcx, ExprKind::Lam(*x, quote_expr(gcx, ecx, l + 1, b)), sp)
         }
         VExpr::App(f, x) => {
@@ -280,6 +303,10 @@ pub fn quote_expr(
             .fold(Expr::new(gcx, ExprKind::EnumRecursor(*id), sp), |acc, x| {
                 Expr::new(gcx, ExprKind::App(acc, quote_expr(gcx, ecx, l, x)), sp)
             }),
-        VExpr::Free(_) => todo!(),
+        VExpr::Free(id) => Expr::new(gcx, ExprKind::Free(*id), sp),
+        VExpr::RecursionBarrier(id, v) => {
+            let _ = v.upgrade().unwrap();
+            Expr::new(gcx, ExprKind::Free(*id), sp)
+        }
     }
 }
