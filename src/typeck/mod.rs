@@ -34,6 +34,7 @@ pub struct TypeckCtxt {
     vals: im::Vector<(AstId, Id<VTy>)>,
     tys: im::Vector<AstId>,
     ty_aliases: im::Vector<(AstId, Span)>,
+    generic_params: im::Vector<(AstId, usize, Id<ast::Ty>)>,
 }
 
 impl Default for TypeckCtxt {
@@ -44,6 +45,7 @@ impl Default for TypeckCtxt {
             vals: Default::default(),
             tys: Default::default(),
             ty_aliases: Default::default(),
+            generic_params: Default::default(),
         }
     }
 }
@@ -82,6 +84,198 @@ pub fn surf_ty_to_core(
     let t = gcx.arenas.ast.ty(t);
     Ok(match t.kind {
         ST::Unit => ast::Ty::new(gcx, CT::Unit, t.span),
+        ST::Data(Ident { symbol, span }, spine) => {
+            if symbol.as_str() == "_" {
+                let report = Report::build(ReportKind::Error, (), span.lo() as usize)
+                    .with_message("invalid identifier `_`")
+                    .with_label(
+                        Label::new(Span(span))
+                            .with_color(Color::Red)
+                            .with_message("`_` is not a valid identifier here"),
+                    )
+                    .with_note("`_` is only allowed inside a generic parameter list")
+                    .finish();
+                gcx.drcx.borrow_mut().report_syncd(report);
+
+                return Err(());
+            }
+
+            let res_data = gcx.arenas.ast.res_data.borrow();
+            let res = res_data.get_by_id(t.id).unwrap();
+            match res {
+                Res::Defn(DefnKind::Enum, id) => {
+                    let Node::Item(i) = gcx.arenas.ast.get_node_by_id(*id).unwrap() else {
+                        unreachable!()
+                    };
+                    let ItemKind::Enum(generics, _, generics_list_span) =
+                        gcx.arenas.ast.item(i).kind
+                    else {
+                        unreachable!()
+                    };
+
+                    if generics.is_empty() {
+                        let report = Report::build(ReportKind::Error, (), t.span.lo() as usize)
+                            .with_message("enum provided generic parameters but did not have any")
+                            .with_label(
+                                Label::new(t.span)
+                                    .with_color(Color::Red)
+                                    .with_message("generic parameters provided here"),
+                            )
+                            .with_label(
+                                Label::new(
+                                    gcx.arenas
+                                        .ast
+                                        .item(i)
+                                        .span
+                                        .with_hi(generics_list_span.hi())
+                                        .into(),
+                                )
+                                .with_message("enum defined here, with no generic parameters")
+                                .with_color(Color::Blue),
+                            )
+                            .with_help(format!(
+                                "remove the generic parameters: `{}`",
+                                gcx.arenas.ast.item(i).ident.as_str(),
+                            ));
+
+                        gcx.drcx.borrow_mut().report_syncd(report.finish());
+
+                        return Ok(ast::Ty::new(gcx, CT::Enum(*id, im::Vector::new()), t.span));
+                    }
+
+                    let mut spine = spine
+                        .clone()
+                        .into_iter()
+                        .map(|x| surf_ty_to_core(gcx, tcx.clone(), x))
+                        .collect::<Result<im::Vector<_>, _>>()?;
+                    if spine.len() > generics.len() {
+                        let spine_docs = spine.clone().into_iter().map(|x| {
+                            let mut w = Vec::new();
+                            let doc =
+                                crate::typeck::pretty::pp_ty(0, gcx, tcx.lvl, tcx.env.clone(), x);
+                            doc.render(usize::MAX, &mut w).unwrap();
+                            String::from_utf8(w).unwrap()
+                        });
+
+                        let plural = if generics.len() != 1 { "s" } else { "" };
+                        let an = if spine.len() - generics.len() == 1 {
+                            "an "
+                        } else {
+                            ""
+                        };
+                        let provided = spine.len();
+                        let provided_plural = if provided != 1 { "s" } else { "" };
+                        let excess_plural = if spine.len() - generics.len() != 1 {
+                            "s"
+                        } else {
+                            ""
+                        };
+
+                        spine.truncate(generics.len());
+
+                        let report = Report::build(ReportKind::Error, (), t.span.lo() as usize)
+                            .with_message(format!(
+                                "enum provided {an}extra generic parameter{excess_plural}"
+                            ))
+                            .with_label(Label::new(t.span).with_color(Color::Red).with_message(
+                                format!("{provided} generic parameter{provided_plural} provided"),
+                            ))
+                            .with_label(
+                                Label::new(
+                                    gcx.arenas
+                                        .ast
+                                        .item(i)
+                                        .span
+                                        .with_hi(generics_list_span.hi())
+                                        .into(),
+                                )
+                                .with_message(format!(
+                                    "enum defined here, with {} generic parameter{plural}",
+                                    generics.len(),
+                                ))
+                                .with_color(Color::Blue),
+                            )
+                            .with_help(format!(
+                                // TODO: get overall type and insert into it
+                                "remove the extra generic parameters: `{}[{}]`",
+                                gcx.arenas.ast.item(i).ident.as_str(),
+                                spine_docs
+                                    .take(generics.len())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+
+                        gcx.drcx.borrow_mut().report_syncd(report.finish());
+                    } else if spine.len() != generics.len() {
+                        let spine_docs = spine.clone().into_iter().map(|x| {
+                            let mut w = Vec::new();
+                            let doc =
+                                crate::typeck::pretty::pp_ty(0, gcx, tcx.lvl, tcx.env.clone(), x);
+                            doc.render(usize::MAX, &mut w).unwrap();
+                            String::from_utf8(w).unwrap()
+                        });
+
+                        let plural = if generics.len() != 1 { "s" } else { "" };
+                        let a = if generics.len() == 1 { "a " } else { "" };
+                        let rest = generics.len() - spine.len();
+                        let rest_plural = if rest != 1 { "s" } else { "" };
+
+                        let report = Report::build(ReportKind::Error, (), t.span.lo() as usize)
+                            .with_message(format!("enum required {a}generic parameter{plural}"))
+                            .with_label(Label::new(t.span).with_color(Color::Red).with_message(
+                                format!(
+                                    "{rest} remaining generic parameter{rest_plural} not provided"
+                                ),
+                            ))
+                            .with_label(
+                                Label::new(
+                                    gcx.arenas
+                                        .ast
+                                        .item(i)
+                                        .span
+                                        .with_hi(generics_list_span.hi())
+                                        .into(),
+                                )
+                                .with_message(format!(
+                                    "enum defined here, with {} generic parameter{plural}",
+                                    generics.len(),
+                                ))
+                                .with_color(Color::Blue),
+                            )
+                            .with_help(format!(
+                                // TODO: get overall type and insert into it
+                                "if you wanted inferred parameters, try `{}[{}]`",
+                                gcx.arenas.ast.item(i).ident.as_str(),
+                                spine_docs
+                                    .chain(
+                                        std::iter::repeat(String::from("_"))
+                                            .take(generics.len() - spine.len())
+                                    )
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+
+                        gcx.drcx.borrow_mut().report_syncd(report.finish());
+
+                        for i in generics.iter().skip(spine.len()) {
+                            let mv = fresh_meta(
+                                gcx,
+                                tcx.lvl,
+                                Symbol::intern(&format!("?{}", i.as_str())),
+                                t.span,
+                                t.span,
+                            );
+                            spine.push_back(mv);
+                        }
+                    }
+
+                    ast::Ty::new(gcx, CT::Enum(*id, spine), t.span)
+                }
+                _ => {
+                    todo!()
+                }
+            }
+        }
         ST::Name(Ident { symbol, span }) => {
             if symbol.as_str() == "_" {
                 return Ok(fresh_meta(
@@ -118,7 +312,78 @@ pub fn surf_ty_to_core(
             let res = res_data.get_by_id(t.id).unwrap();
             match res {
                 Res::PrimTy(PrimTy::Integer) => todo!(),
-                Res::Defn(DefnKind::Enum, id) => ast::Ty::new(gcx, CT::Enum(*id), t.span),
+                Res::Generic(id, ix) => tcx
+                    .generic_params
+                    .iter()
+                    .find_map(|(id1, ix1, t)| {
+                        if id == id1 && ix == ix1 {
+                            Some(*t)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap(),
+                Res::Defn(DefnKind::Enum, id) => {
+                    let Node::Item(i) = gcx.arenas.ast.get_node_by_id(*id).unwrap() else {
+                        unreachable!()
+                    };
+                    let ItemKind::Enum(generics, _, generics_list_span) =
+                        gcx.arenas.ast.item(i).kind
+                    else {
+                        unreachable!()
+                    };
+
+                    let mut vec = im::Vector::new();
+                    if !generics.is_empty() {
+                        let plural = if generics.len() != 1 { "s" } else { "" };
+                        let a = if generics.len() == 1 { "a " } else { "" };
+
+                        let report =
+                            Report::build(ReportKind::Error, (), t.span.lo() as usize)
+                                .with_message(format!("enum required {a}generic parameter{plural}"))
+                                .with_label(Label::new(t.span).with_color(Color::Red).with_message(
+                                    format!("generic parameter{plural} not provided"),
+                                ))
+                                .with_label(
+                                    Label::new(
+                                        gcx.arenas
+                                            .ast
+                                            .item(i)
+                                            .span
+                                            .with_hi(generics_list_span.hi())
+                                            .into(),
+                                    )
+                                    .with_message(format!(
+                                        "enum defined here, with {} generic parameter{plural}",
+                                        generics.len(),
+                                    ))
+                                    .with_color(Color::Blue),
+                                )
+                                .with_help(format!(
+                                    "if you wanted inferred parameters, try `{}[{}]`",
+                                    gcx.arenas.ast.item(i).ident.as_str(),
+                                    std::iter::repeat("_")
+                                        .take(generics.len())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ));
+
+                        gcx.drcx.borrow_mut().report_syncd(report.finish());
+
+                        for i in generics {
+                            let mv = fresh_meta(
+                                gcx,
+                                tcx.lvl,
+                                Symbol::intern(&format!("?{}", i.as_str())),
+                                t.span,
+                                t.span,
+                            );
+                            vec.push_back(mv);
+                        }
+                    };
+
+                    ast::Ty::new(gcx, CT::Enum(*id, vec), t.span)
+                }
                 Res::Defn(DefnKind::TyAlias, id) => {
                     let Some(Node::Item(i)) = gcx.arenas.ast.get_node_by_id(*id) else {
                         unreachable!()
@@ -495,50 +760,77 @@ pub fn infer(
                     let Some(Node::Item(i)) = gcx.arenas.ast.get_node_by_id(*id) else {
                         unreachable!()
                     };
-                    let ItemKind::Enum(cons) = gcx.arenas.ast.item(i).kind else {
+                    let ItemKind::Enum(generics, cons, _) = gcx.arenas.ast.item(i).kind else {
                         unreachable!()
                     };
+
+                    let dummy_span = Span((u32::MAX..u32::MAX).into());
+
+                    let syn_ids = generics
+                        .iter()
+                        .rev()
+                        .map(|x| {
+                            gcx.arenas
+                                .ast
+                                .syn(surf::Synthetic::new(gcx, dummy_span, Some(*x)))
+                                .id
+                        })
+                        .collect::<Vec<_>>();
+                    let len = syn_ids.len();
+                    let vars = syn_ids
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .map(|(lvl, syn_id)| {
+                            (
+                                *id,
+                                lvl,
+                                ast::Ty::new(
+                                    gcx,
+                                    CT::Var(syn_id, DeBruijnIdx::from(len - lvl - 1)),
+                                    dummy_span,
+                                ),
+                            )
+                        })
+                        .collect::<im::Vector<_>>();
 
                     let (_, branch_tys) = cons.get(*branch).unwrap();
                     let branch_tys = branch_tys
                         .into_iter()
                         .map(|t| -> Result<_, _> {
-                            Ok(eval_ty(
-                                gcx,
-                                im::Vector::new(),
-                                surf_ty_to_core(gcx, TypeckCtxt::default(), *t)?,
-                            ))
+                            let tcx = TypeckCtxt {
+                                generic_params: vars.clone(),
+                                ..TypeckCtxt::default()
+                            };
+                            surf_ty_to_core(gcx, tcx, *t)
                         })
                         .collect::<Result<Vec<_>, _>>()?;
 
+                    let t = branch_tys.into_iter().rfold(
+                        ast::Ty::new(
+                            gcx,
+                            CT::Enum(*id, vars.clone().into_iter().map(|(_, _, x)| x).collect()),
+                            dummy_span,
+                        ),
+                        |acc, x| ast::Ty::new(gcx, CT::Arrow(x, acc), dummy_span),
+                    );
+
                     (
                         ast::Expr::new(gcx, CE::EnumConstructor(*id, *branch), e.span),
-                        if branch_tys.is_empty() {
-                            // TODO: branch spans
-                            VTy::new(gcx, VTyKind::Enum(*id), Span((u32::MAX..u32::MAX).into()))
-                        } else {
-                            branch_tys.into_iter().rfold(
-                                VTy::new(
-                                    gcx,
-                                    VTyKind::Enum(*id),
-                                    Span((u32::MAX..u32::MAX).into()),
-                                ),
-                                |acc, x| {
-                                    VTy::new(
-                                        gcx,
-                                        VTyKind::Arrow(x, acc),
-                                        Span((u32::MAX..u32::MAX).into()),
-                                    )
-                                },
-                            )
-                        },
+                        eval_ty(
+                            gcx,
+                            im::Vector::new(),
+                            syn_ids.iter().copied().rfold(t, |acc, x| {
+                                ast::Ty::new(gcx, CT::Forall(x, acc), dummy_span)
+                            }),
+                        ),
                     )
                 }
                 Res::Defn(DefnKind::EnumRecursor, id) => {
                     let Some(Node::Item(i)) = gcx.arenas.ast.get_node_by_id(*id) else {
                         unreachable!()
                     };
-                    let ItemKind::Enum(cons) = gcx.arenas.ast.item(i).kind else {
+                    let ItemKind::Enum(generics, cons, _) = gcx.arenas.ast.item(i).kind else {
                         unreachable!()
                     };
 
@@ -546,7 +838,42 @@ pub fn infer(
 
                     let id = *id;
 
-                    let this = ast::Ty::new(gcx, CT::Enum(id), dummy_span);
+                    let dummy_span = Span((u32::MAX..u32::MAX).into());
+
+                    let syn_ids = generics
+                        .iter()
+                        .rev()
+                        .map(|x| {
+                            gcx.arenas
+                                .ast
+                                .syn(surf::Synthetic::new(gcx, dummy_span, Some(*x)))
+                                .id
+                        })
+                        .collect::<Vec<_>>();
+                    let len = syn_ids.len() + 1;
+                    let vars = syn_ids
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .map(|(lvl, syn_id)| {
+                            (
+                                id,
+                                lvl,
+                                ast::Ty::new(
+                                    gcx,
+                                    CT::Var(syn_id, DeBruijnIdx::from(len - lvl - 1)),
+                                    dummy_span,
+                                ),
+                            )
+                        })
+                        .collect::<im::Vector<_>>();
+
+                    let this = ast::Ty::new(
+                        gcx,
+                        CT::Enum(id, vars.clone().into_iter().map(|(_, _, x)| x).collect()),
+                        dummy_span,
+                    );
+
                     let var_id = Ident {
                         symbol: Symbol::intern_static("'a"),
                         span: *dummy_span,
@@ -565,7 +892,16 @@ pub fn infer(
                         .into_iter()
                         .map(|(_, t)| -> Result<_, _> {
                             Ok(t.into_iter()
-                                .map(|x| surf_ty_to_core(gcx, TypeckCtxt::default(), x))
+                                .map(|x| {
+                                    surf_ty_to_core(
+                                        gcx,
+                                        TypeckCtxt {
+                                            generic_params: vars.clone(),
+                                            ..TypeckCtxt::default()
+                                        },
+                                        x,
+                                    )
+                                })
                                 .collect::<Result<Vec<_>, _>>()?
                                 .into_iter()
                                 .rfold(var, |acc, x| {
@@ -578,19 +914,22 @@ pub fn infer(
                             ast::Ty::new(gcx, CT::Arrow(x, acc), dummy_span)
                         });
 
-                    let t = VTy::new(
+                    let t = ast::Ty::new(
                         gcx,
-                        VT::Forall(
-                            syn_id,
-                            Closure(
-                                im::Vector::new(),
-                                ast::Ty::new(gcx, CT::Arrow(this, t), dummy_span),
-                            ),
-                        ),
+                        CT::Forall(syn_id, ast::Ty::new(gcx, CT::Arrow(this, t), dummy_span)),
                         dummy_span,
                     );
 
-                    (ast::Expr::new(gcx, CE::EnumRecursor(id), e.span), t)
+                    (
+                        ast::Expr::new(gcx, CE::EnumRecursor(id), e.span),
+                        eval_ty(
+                            gcx,
+                            im::Vector::new(),
+                            syn_ids.iter().copied().rfold(t, |acc, x| {
+                                ast::Ty::new(gcx, CT::Forall(x, acc), dummy_span)
+                            }),
+                        ),
+                    )
                 }
                 Res::Defn(DefnKind::Value, id) => {
                     let Some(Node::Item(i)) = gcx.arenas.ast.get_node_by_id(*id) else {
@@ -621,7 +960,7 @@ pub fn infer(
                         *vt,
                     )
                 }
-                _ => unreachable!(),
+                _ => unreachable!("{:#?}", res),
             }
         }
         SE::Apply(t, u) => {

@@ -52,7 +52,7 @@ pub fn pp_ty(
                 .unwrap()
                 .as_str(),
         ),
-        TyKind::Enum(id) => RcDoc::text(
+        TyKind::Enum(id, generics) => RcDoc::text(
             gcx.arenas
                 .ast
                 .get_node_by_id(id)
@@ -60,7 +60,21 @@ pub fn pp_ty(
                 .ident(gcx)
                 .unwrap()
                 .as_str(),
-        ),
+        )
+        .append({
+            let doc = RcAllocator.intersperse(
+                generics
+                    .iter()
+                    .copied()
+                    .map(|x| pp_ty(PREC_TY_FORALL, gcx, l, e.clone(), x)),
+                RcDoc::text(",").append(RcDoc::space()),
+            );
+            if generics.is_empty() {
+                RcAllocator.nil()
+            } else {
+                doc.brackets()
+            }
+        }),
         TyKind::Arrow(a, b) => {
             let a = pp_ty(PREC_TY_PRIMARY, gcx, l, e.clone(), a);
             let b = pp_ty(PREC_TY_FORALL, gcx, l, e, b);
@@ -98,6 +112,12 @@ pub fn pp_ty(
                     .align()
                     .into_doc(),
             )
+        }
+        TyKind::Meta(m, _) | TyKind::InsertedMeta(m)
+            if m.0.borrow().1.name == Symbol::intern_static("?_") =>
+        {
+            // TODO: find a less hacky way to do this
+            RcDoc::text("_")
         }
         TyKind::Meta(x, sp) => {
             let MetaInfo { name, .. } = x.0.borrow().1;
@@ -176,7 +196,7 @@ pub fn pp_expr(
             let Node::Item(i) = gcx.arenas.ast.get_node_by_id(id).unwrap() else {
                 unreachable!()
             };
-            let ItemKind::Enum(cons) = gcx.arenas.ast.item(i).kind else {
+            let ItemKind::Enum(_, cons, _) = gcx.arenas.ast.item(i).kind else {
                 unreachable!()
             };
 
@@ -312,9 +332,10 @@ pub fn pp_expr_no_norm(prec: usize, gcx: &GlobalCtxt, expr: Id<Expr>) -> RcDoc<'
             let Node::Item(i) = gcx.arenas.ast.get_node_by_id(id).unwrap() else {
                 unreachable!()
             };
-            let ItemKind::Enum(cons) = gcx.arenas.ast.item(i).kind else {
+            let ItemKind::Enum(tmp, cons, _) = gcx.arenas.ast.item(i).kind else {
                 unreachable!()
             };
+            todo!("OOPS");
 
             let &(ident, _) = cons.get(branch).unwrap();
 
@@ -453,7 +474,7 @@ pub fn pp_ty_no_norm(prec: usize, gcx: &GlobalCtxt, ty: Id<Ty>) -> RcDoc<'_> {
                 .unwrap()
                 .as_str(),
         ),
-        TyKind::Enum(id) => RcDoc::text(
+        TyKind::Enum(id, tys) => RcDoc::text(
             gcx.arenas
                 .ast
                 .get_node_by_id(id)
@@ -461,7 +482,11 @@ pub fn pp_ty_no_norm(prec: usize, gcx: &GlobalCtxt, ty: Id<Ty>) -> RcDoc<'_> {
                 .ident(gcx)
                 .unwrap()
                 .as_str(),
-        ),
+        )
+        .append({
+            todo!("OOPS");
+            RcDoc::nil()
+        }),
         TyKind::Arrow(a, b) => {
             let a = pp_ty_no_norm(PREC_TY_PRIMARY, gcx, a);
             let b = pp_ty_no_norm(PREC_TY_FORALL, gcx, b);

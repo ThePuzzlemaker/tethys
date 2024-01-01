@@ -6,9 +6,10 @@
 //! are stored within the [`TyCtxt`] itself, within the
 //! [`crate::ctxt::AstArenas`] structure.
 
-use ariadne::{Color, Label, ReportKind};
+use ariadne::{Color, Config, Label, LabelAttach, ReportKind};
 use calypso_base::symbol::{Ident, Symbol};
 use id_arena::Id;
+use im::HashSet;
 use std::collections::HashMap;
 
 use crate::{
@@ -83,24 +84,10 @@ pub fn resolve_code_unit(gcx: &GlobalCtxt, items: &[Id<Item>]) -> TysResult<()> 
         defn_id_to_span: HashMap::new(),
         ty_stack: vec![],
         expr_stack: vec![],
+        gen_ty_stack: vec![],
     };
     rcx.collect(items)?;
     rcx.lower_code_unit(items)?;
-    Ok(())
-}
-
-pub fn resolve_ty(gcx: &GlobalCtxt, ty: Id<Ty>) -> TysResult<()> {
-    let arena = &gcx.arenas.ast;
-    let mut rcx = ResolutionCtxt {
-        gcx,
-        arena,
-        expr_ns: HashMap::new(),
-        type_ns: HashMap::new(),
-        defn_id_to_span: HashMap::new(),
-        ty_stack: vec![],
-        expr_stack: vec![],
-    };
-    rcx.lower_ty(ty)?;
     Ok(())
 }
 
@@ -114,6 +101,8 @@ struct ResolutionCtxt<'gcx> {
     /// A stack of `forall`-binders that we're under at the moment. `Vec<(AstId
     /// of forall, name of bound variable)>`
     ty_stack: Vec<(AstId, Symbol)>,
+    /// A stack of generic types that we're under at the moment.
+    gen_ty_stack: Vec<(AstId, usize, Symbol)>,
     /// Similar to [`ty_stack`], just for expressions (i.e. `let`- and
     /// lambda-binders)
     expr_stack: Vec<(AstId, Symbol)>,
@@ -139,29 +128,46 @@ impl<'gcx> ResolutionCtxt<'gcx> {
             let Node::Item(i) = self.arena.get_node_by_id(duplicate).unwrap() else {
                 unreachable!()
             };
-            let ItemKind::Enum(cons) = self.arena.item(i).kind else {
+            let ItemKind::Enum(_, cons, _) = self.arena.item(i).kind else {
                 unreachable!()
             };
             cons.get(branch).unwrap().0.span
+        } else if let DefnKind::Generic(ix) = dup_kind {
+            let Node::Item(i) = self.arena.get_node_by_id(duplicate).unwrap() else {
+                unreachable!()
+            };
+            let ItemKind::Enum(generics, _, _) = self.arena.item(i).kind else {
+                unreachable!()
+            };
+            generics.get(ix).unwrap().span
         } else {
             ident_span
         };
 
-        let span: Span = self.defn_id_to_span[&duplicate]
-            .with_hi(ident_span.hi())
-            .into();
+        let span: Span = ident_span.into();
         let report = Diagnostic::build(ReportKind::Error, (), span.lo() as usize)
-            .with_message(format!(
-                "the name `{}` is defined multiple times",
-                ident.symbol
-            ))
+            .with_message(match (kind, dup_kind) {
+                (DefnKind::Generic(_), DefnKind::Generic(_)) => {
+                    format!(
+                        "the generic parameter `{}` is defined multiple times",
+                        ident.symbol
+                    )
+                }
+                (DefnKind::Generic(_), _) => {
+                    format!(
+                        "the generic parameter `{}` shadows an existing type",
+                        ident.symbol
+                    )
+                }
+                _ => format!("the name `{}` is defined multiple times", ident.symbol),
+            })
             .with_label(
                 Label::new(span)
                     .with_message("first defined here")
                     .with_color(Color::Blue),
             )
             .with_label(
-                Label::new(item.span.with_hi(ident.span.hi()).into())
+                Label::new(ident.span.into())
                     .with_message("redefined here")
                     .with_color(Color::Red),
             )
@@ -174,8 +180,13 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                     // TODO: until I get pattern matching
                     "`enum`s must have unique names in the value namespace"
                 }
+                (DefnKind::Generic(_), DefnKind::Generic(_)) => {
+                    "datatype generics must have unique names"
+                }
+                (DefnKind::Generic(_), _) => "datatype generics must not shadow existing types",
                 _ => unreachable!(),
             })
+            .with_config(Config::default().with_label_attach(LabelAttach::End))
             .finish();
 
         let mut drcx = self.gcx.drcx.borrow_mut();
@@ -216,7 +227,7 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                     }
                     self.defn_id_to_span.insert(item.id, item.span);
                 }
-                ItemKind::Enum(ref cons) => {
+                ItemKind::Enum(ref generics, ref cons, _) => {
                     if let Some(&(defn_id, defn_kind)) = self.type_ns.get(&item.ident.symbol) {
                         self.report_duplicate_name(
                             item.clone(),
@@ -288,15 +299,87 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                 self.lower_ty(ty)?;
             }
 
-            ItemKind::Enum(cons) => {
+            ItemKind::Enum(ref generics, ref cons, _) => {
+                let mut set = HashMap::new();
+                for (ix, ident) in generics.iter().enumerate() {
+                    if let Some(&(defn_id, defn_kind)) = self.type_ns.get(&ident.symbol) {
+                        self.report_duplicate_name(
+                            item.clone(),
+                            *ident,
+                            DefnKind::Generic(ix),
+                            defn_id,
+                            defn_kind,
+                        );
+                    } else if let Some(dup_ix) = set.get(&ident.symbol) {
+                        self.report_duplicate_name(
+                            item.clone(),
+                            *ident,
+                            DefnKind::Generic(ix),
+                            item.id,
+                            DefnKind::Generic(*dup_ix),
+                        );
+                    } else {
+                        set.insert(ident.symbol, ix);
+                    }
+                }
+
+                let plus = generics
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(ix, x)| (item.id, ix, x.symbol))
+                    .collect::<Vec<_>>();
                 for (_, tys) in cons {
                     for ty in tys {
-                        self.lower_ty(ty)?;
+                        self.gen_ty_stack.extend(plus.iter());
+                        self.lower_ty(*ty)?;
+                        self.gen_ty_stack
+                            .truncate(self.gen_ty_stack.len() - generics.len());
                     }
                 }
             }
         };
         Ok(())
+    }
+
+    fn lower_ty_name(&mut self, var: Ident, span: Span, id: AstId) {
+        // We reverse here because we want the closest binder, not the
+        // furthest, and we push at the back.
+        let res = if let Some((id, _)) = self
+            .ty_stack
+            .iter()
+            .rev()
+            .find(|(_, sym)| *sym == var.symbol)
+        {
+            Res::TyVar(*id)
+        } else if let Some((id, ix, _)) = self
+            .gen_ty_stack
+            .iter()
+            .rev()
+            .find(|(_, _, sym)| *sym == var.symbol)
+        {
+            Res::Generic(*id, *ix)
+        } else if let Some((defn, defn_kind)) = self.type_ns.get(&var) {
+            Res::Defn(*defn_kind, *defn)
+        } else if var.as_str() == "Integer" {
+            Res::PrimTy(PrimTy::Integer)
+        } else if var.as_str() == "_" || var.as_str() == "'_" {
+            Res::Err
+        } else {
+            let report = Diagnostic::build(ReportKind::Error, (), span.lo() as usize)
+                .with_message(format!("cannot find type `{}` in this scope", var.symbol))
+                .with_label(
+                    Label::new(span)
+                        .with_message("not found in this scope")
+                        .with_color(Color::Red),
+                )
+                .finish();
+            let mut drcx = self.gcx.drcx.borrow_mut();
+            drcx.report_syncd(report);
+            drop(drcx);
+            Res::Err
+        };
+        self.arena.res_data.borrow_mut().insert(id, res);
     }
 
     fn lower_ty(&mut self, ty: Id<Ty>) -> TysResult<Vec<(AstId, Symbol)>> {
@@ -309,41 +392,12 @@ impl<'gcx> ResolutionCtxt<'gcx> {
             let ty = rcx.arena.ty(ty);
             match ty.kind {
                 TyKind::Unit => (),
-                TyKind::Name(var) => {
-                    // We reverse here because we want the closest binder, not the
-                    // furthest, and we push at the back.
-                    let res = if let Some((id, _)) = rcx
-                        .ty_stack
-                        .iter()
-                        .rev()
-                        .find(|(_, sym)| *sym == var.symbol)
-                    {
-                        Res::TyVar(*id)
-                    } else if let Some((defn, defn_kind)) = rcx.type_ns.get(&var) {
-                        Res::Defn(*defn_kind, *defn)
-                    } else if var.as_str() == "Integer" {
-                        Res::PrimTy(PrimTy::Integer)
-                    } else if var.as_str() == "_" || var.as_str() == "'_" {
-                        Res::Err
-                    } else {
-                        let report =
-                            Diagnostic::build(ReportKind::Error, (), ty.span.lo() as usize)
-                                .with_message(format!(
-                                    "cannot find type `{}` in this scope",
-                                    var.symbol
-                                ))
-                                .with_label(
-                                    Label::new(ty.span)
-                                        .with_message("not found in this scope")
-                                        .with_color(Color::Red),
-                                )
-                                .finish();
-                        let mut drcx = rcx.gcx.drcx.borrow_mut();
-                        drcx.report_syncd(report);
-                        drop(drcx);
-                        Res::Err
-                    };
-                    rcx.arena.res_data.borrow_mut().insert(ty.id, res);
+                TyKind::Name(var) => rcx.lower_ty_name(var, ty.span, ty.id),
+                TyKind::Data(var, spine) => {
+                    rcx.lower_ty_name(var, var.span.into(), ty.id);
+                    for ty in spine {
+                        rcx.lower_ty(ty)?;
+                    }
                 }
                 TyKind::Arrow(t1, t2) => {
                     let _ = inner(rcx, t1, false)?;

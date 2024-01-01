@@ -91,7 +91,7 @@ fn eval_app(
             let Node::Item(i) = gcx.arenas.ast.get_node_by_id(*id1).unwrap() else {
                 unreachable!()
             };
-            let ItemKind::Enum(cons) = gcx.arenas.ast.item(i).kind else {
+            let ItemKind::Enum(_, cons, _) = gcx.arenas.ast.item(i).kind else {
                 unreachable!()
             };
 
@@ -222,7 +222,7 @@ pub fn eval_expr(gcx: &GlobalCtxt, ecx: &mut EvalCtx, env: Env, expr: Id<Expr>) 
             let Node::Item(i) = gcx.arenas.ast.get_node_by_id(id).unwrap() else {
                 unreachable!()
             };
-            let ItemKind::Enum(cons) = gcx.arenas.ast.item(i).kind else {
+            let ItemKind::Enum(_, cons, _) = gcx.arenas.ast.item(i).kind else {
                 unreachable!()
             };
 

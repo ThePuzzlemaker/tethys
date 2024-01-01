@@ -54,7 +54,7 @@ pub enum TyKind {
     Meta(MetaVar, im::Vector<Id<Ty>>),
     InsertedMeta(MetaVar),
     Free(AstId),
-    Enum(AstId),
+    Enum(AstId, im::Vector<Id<Ty>>),
 }
 
 #[derive(Clone, Debug)]

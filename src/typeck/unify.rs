@@ -112,7 +112,11 @@ fn rename(
                 t.span,
             )
         }
-        Enum(x) => Ty::new(gcx, TyKind::Enum(x), t.span),
+        Enum(x, spine) => Ty::new(
+            gcx,
+            TyKind::Enum(x, rename_spine(gcx, m, pren, spine)?),
+            t.span,
+        ),
     })
 }
 
@@ -186,7 +190,9 @@ pub fn unify(gcx: &GlobalCtxt, l: DeBruijnLvl, t: Id<VTy>, u: Id<VTy>) -> Result
             unify(gcx, l + 1, c1, c2)?;
         }
         (Free(n1), Free(n2)) if n1 == n2 => {}
-        (Enum(x1), Enum(x2)) if x1 == x2 => {}
+        (Enum(x1, sp1), Enum(x2, sp2)) if x1 == x2 => {
+            unify_spine(gcx, l, sp1, sp2)?;
+        }
         _ => {
             return Err(UnifyError::RigidMismatch);
         }

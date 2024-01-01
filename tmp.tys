@@ -1,66 +1,35 @@
-type ChurchN = forall 'a. ('a -> 'a) -> 'a -> 'a
+enum List[T] = Nil
+     	     | Cons T List[T]
 
-def main : _ = (\n.(isZero n) (S Z) (mult n (fact (pred n)))) Z
-def Z : ChurchN
-      = \f z. z
-def S : ChurchN -> ChurchN
-      = \n f z.f (n f z)
-def add : ChurchN -> ChurchN -> ChurchN
-        = \m n.\f z.m f (n f z)
-def mult : ChurchN -> ChurchN -> ChurchN
-         = \m n.\f z.m (n f) z
-def pred : ChurchN -> ChurchN
-	 = \n f z.n (\g h.h (g f)) (\u.z) (\u.u)
-def fact : ChurchN -> ChurchN
-         = \n. (isZero n) (\_.S Z) (\_.mult n (fact (pred n))) ()
+enum Option[T] = None
+     	       | Some T
 
-type ChurchBool = forall 'a. 'a -> 'a -> 'a
+def optMap : forall 'T 'U.Option['T] -> ('T -> 'U) -> Option['U]
+    	   = λo f.Option o None (λt.Some (f t))
+def optBind : forall 'T 'U.Option['T] -> ('T -> Option['U]) -> Option['U]
+    	    = λo f.Option o None (λt.f t)
 
-def true : ChurchBool = \x y.x
-def false : ChurchBool = \x y.y
-def isZero : ChurchN -> ChurchBool
-	   = \n.n (\x.false) true
-def isEven : ChurchN -> ChurchBool
-           = \n.(isZero n) (\_.true) (\_.(isOdd (pred n))) ()
-def isOdd  : ChurchN -> ChurchBool
-    	   = \n.(isZero n) (\_.false) (\_.(isEven (pred n))) ()
+def hd : forall 'T. List['T] -> Option['T]
+       = λl. List l None (λh _.Some h)
+def tl : forall 'T. List['T] -> Option[List['T]]
+       = λl. List l None (λ_ t.Some t)
+def length : forall 'T. List['T] -> Nat
+    	   = λl. List l (λ_.Zero) (λ_ t _.Succ (length t)) ()
 
-# enum Void = |
-
-
-# enum NatList = Nil
-#              | Cons Nat NatList
-
-# enum NatOption = NONone
-#                | NOSome Nat
-
-# enum NatListOption = NLONone
-#      		   | NLOSome NatList
-
-# def hd : NatList -> NatOption = \l. NatList l NONone (\x _.NOSome x)
-# def tl : NatList -> NatListOption = \l. NatList l NLONone (\_ l.NLOSome l)
-
-# def inf : NatList = Cons (addNat (Succ Zero) (NatOption (hd inf) Zero (\x.x))) inf
-
-# enum Nat = Zero
-#          | Succ Nat
+enum Nat = Zero
+         | Succ Nat
 	 
-# def foo : _ = let zero = Zero in
-#     	      let one = Succ zero in
-# 	      let two = Succ one in
-# 	      let three = Succ two in
-# 	      let five = pred (mult two three) in
-# 	      fact (pred (pred five))
-	      
-# def id : forall 'a.'a -> 'a = \x.x
+def id    : forall 'a.'a -> 'a = λx.x
+def const : forall 'a.'a -> 'a -> 'a = λx y.x
 
-# def add  : Nat -> Nat -> Nat
-#          = \n m.Nat n (\_.m) (\n _.Succ (add n m)) ()
-# def mult : Nat -> Nat -> Nat
-#          = \n m.Nat n (\_.Zero) (\n _.add m (mult n m)) ()
-# def pred : Nat -> Nat
-#     	 = \n.Nat n Zero id
-# def fact : Nat -> Nat
-#     	 = \n.Nat n (\_.Succ Zero) (\m _.mult n (fact m)) ()
+def add  : Nat -> Nat -> Nat
+         = λn m.Nat n m (λn.Succ (add n m))
+def mult : Nat -> Nat -> Nat
+         = λn m.Nat n (Zero) (λn.add m (mult n m))
+def pred : Nat -> Nat
+    	 = λn.Nat n Zero id
+def fact : Nat -> Nat
+    	 = λn.Nat n (Succ Zero) (λm.mult n (fact m))
 
-#def main : Nat = foo
+def list : List[Nat] = (Cons Zero (Cons (fact (Succ (Succ (Succ Zero)))) Nil))
+def main : _ = optBind (tl list) hd

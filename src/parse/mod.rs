@@ -108,6 +108,12 @@ pub enum Token {
     Arrow,
     #[token("|")]
     Pipe,
+    #[token("[")]
+    LBracket,
+    #[token("]")]
+    RBracket,
+    #[token(",")]
+    Comma,
 
     #[regex("-?[0-9]+", |lex| parse_number(lex, 10))]
     #[regex("0b[01]+", |lex| parse_number(lex, 2))]
@@ -148,6 +154,9 @@ impl Token {
             Token::Dot => "`.`",
             Token::LParen => "`(`",
             Token::RParen => "`)`",
+            Token::LBracket => "`[`",
+            Token::RBracket => "`]`",
+            Token::Comma => "`,`",
             Token::Colon => "`:`",
             Token::Eq => "`=`",
             Token::Arrow => "`->`",
@@ -207,6 +216,18 @@ pub fn parser(
 
     let ty = recursive(|ty| {
         let primary = choice((
+            ident
+                .then_ignore(just(Token::LBracket))
+                .then(
+                    ty.clone()
+                        .separated_by(just(Token::Comma))
+                        .collect::<Vec<_>>()
+                        .map(im::Vector::from),
+                )
+                .then_ignore(just(Token::RBracket))
+                .map_with_span(|(ident, tys), span: Span| {
+                    Ty::new(gcx, TyKind::Data(ident, tys), span)
+                }),
             ident.map_with_span(|ident, span| Ty::new(gcx, TyKind::Name(ident), span)),
             just([Token::LParen, Token::RParen])
                 .map_with_span(|_, span| Ty::new(gcx, TyKind::Unit, span)),
@@ -335,6 +356,18 @@ pub fn parser(
     let r#enum = just(Token::Enum)
         .map_with_span(|_, span: Span| span)
         .then(ident)
+        .then(
+            just(Token::LBracket)
+                .ignore_then(
+                    ident
+                        .separated_by(just(Token::Comma))
+                        .collect::<Vec<_>>()
+                        .map(im::Vector::from),
+                )
+                .then_ignore(just(Token::RBracket))
+                .or_not()
+                .map_with_span(|x, span: Span| (x.unwrap_or_default(), span)),
+        )
         .then_ignore(just(Token::Eq))
         .then(
             just(Token::Pipe).map(|_| vec![]).or(ident
@@ -342,15 +375,21 @@ pub fn parser(
                 .separated_by(just(Token::Pipe))
                 .collect::<Vec<_>>()),
         )
-        .map_with_span(|((sp, name), tys), sp2: Span| {
-            let sp = sp.with_hi(sp2.hi()).into();
-            Item::new(
-                gcx,
-                name,
-                ItemKind::Enum(tys.into_iter().map(|(x, y)| (x, y.into())).collect()),
-                sp,
-            )
-        });
+        .map_with_span(
+            |(((sp, name), (generics, generics_list_span)), tys), sp2: Span| {
+                let sp = sp.with_hi(sp2.hi()).into();
+                Item::new(
+                    gcx,
+                    name,
+                    ItemKind::Enum(
+                        generics,
+                        tys.into_iter().map(|(x, y)| (x, y.into())).collect(),
+                        generics_list_span,
+                    ),
+                    sp,
+                )
+            },
+        );
 
     let item = choice((def, ty_alias, r#enum))
         .repeated()
@@ -405,7 +444,7 @@ fn render_diagnostic(
             .with_message(format!(
                 "{}, expected: {}",
                 if let Some(found) = found {
-                    Cow::from(format!("Unexpected token `{}`", found.description()))
+                    Cow::from(format!("Unexpected token {}", found.description()))
                 } else {
                     Cow::from("Unexpected end of input")
                 },

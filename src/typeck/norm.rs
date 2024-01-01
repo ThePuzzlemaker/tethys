@@ -40,7 +40,7 @@ pub enum VTyKind {
     Arrow(Id<VTy>, Id<VTy>),
     Forall(AstId, Closure),
     Free(AstId),
-    Enum(AstId),
+    Enum(AstId, VSpine),
 }
 
 pub fn apply_ty_closure(gcx: &GlobalCtxt, Closure(mut env, t): Closure, u: Id<VTy>) -> Id<VTy> {
@@ -74,7 +74,9 @@ pub fn eval_ty(gcx: &GlobalCtxt, env: Env, ty: Id<Ty>) -> Id<VTy> {
         TyKind::Meta(m, sp) => eval_meta(gcx, ty.span, m, eval_spine(gcx, env, sp)),
         TyKind::InsertedMeta(m) => eval_meta(gcx, ty.span, m, env),
         TyKind::Forall(x, t) => VTy::new(gcx, VTyKind::Forall(x, Closure(env, t)), ty.span),
-        TyKind::Enum(id) => VTy::new(gcx, VTyKind::Enum(id), ty.span),
+        TyKind::Enum(id, spine) => {
+            VTy::new(gcx, VTyKind::Enum(id, eval_spine(gcx, env, spine)), ty.span)
+        }
     }
 }
 
@@ -129,7 +131,9 @@ pub fn quote_ty(gcx: &GlobalCtxt, l: DeBruijnLvl, t: Id<VTy>) -> Id<Ty> {
             t.span,
         ),
         VTyKind::Free(id) => Ty::new(gcx, TyKind::Free(id), t.span),
-        VTyKind::Enum(id) => Ty::new(gcx, TyKind::Enum(id), t.span),
+        VTyKind::Enum(id, spine) => {
+            Ty::new(gcx, TyKind::Enum(id, quote_ty_spine(gcx, l, spine)), t.span)
+        }
     }
 }
 

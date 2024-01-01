@@ -21,6 +21,20 @@ pub fn pp_ty(prec: usize, gcx: &GlobalCtxt, ty: Id<Ty>) -> RcDoc<'_> {
     match gcx.arenas.ast.ty(ty).kind {
         TyKind::Unit => RcDoc::text("()"),
         TyKind::Name(nm) => RcDoc::text(nm.as_str()),
+        TyKind::Data(nm, generics) => RcAllocator
+            .text(nm.as_str())
+            .append(
+                RcAllocator
+                    .intersperse(
+                        generics
+                            .iter()
+                            .copied()
+                            .map(|x| pp_ty(PREC_TY_FORALL, gcx, x)),
+                        RcDoc::text(",").append(RcDoc::space()),
+                    )
+                    .brackets(),
+            )
+            .into_doc(),
         TyKind::Arrow(a, b) => {
             let a = pp_ty(PREC_TY_PRIMARY, gcx, a);
             let b = pp_ty(PREC_TY_FORALL, gcx, b);
@@ -158,7 +172,7 @@ pub fn pp_item(gcx: &GlobalCtxt, item: Id<Item>) -> RcDoc<'_> {
                 .append(t)
                 .into_doc()
         }
-        ItemKind::Enum(cons) => {
+        ItemKind::Enum(generics, cons, _) => {
             let doc = if cons.is_empty() {
                 RcAllocator.text("|")
             } else {
@@ -182,6 +196,17 @@ pub fn pp_item(gcx: &GlobalCtxt, item: Id<Item>) -> RcDoc<'_> {
                 .text("enum")
                 .append(RcDoc::space())
                 .append(item.ident.as_str())
+                .append({
+                    let doc = RcAllocator.intersperse(
+                        generics.iter().copied().map(|x| RcDoc::text(x.as_str())),
+                        RcDoc::text(",").append(RcDoc::space()),
+                    );
+                    if generics.is_empty() {
+                        RcAllocator.nil()
+                    } else {
+                        doc.brackets()
+                    }
+                })
                 .append(RcDoc::space())
                 .append(
                     RcAllocator

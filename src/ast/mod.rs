@@ -53,7 +53,11 @@ pub enum ItemKind {
     /// A type alias, as defined by `type`.
     TyAlias(Id<Ty>),
     /// An enum, as defined by `enum`.
-    Enum(im::Vector<(Ident, im::Vector<Id<Ty>>)>),
+    Enum(
+        im::Vector<Ident>,
+        im::Vector<(Ident, im::Vector<Id<Ty>>)>,
+        Span,
+    ),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -95,7 +99,7 @@ pub enum Recursive {
     Recursive(Ident),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Ty {
     pub id: AstId,
     pub kind: TyKind,
@@ -111,11 +115,12 @@ impl Ty {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum TyKind {
     /// N.B. This will eventually be generalized to tuples
     Unit,
     Name(Ident),
+    Data(Ident, im::Vector<Id<Ty>>),
     Arrow(Id<Ty>, Id<Ty>),
     Forall(Ident, Id<Ty>),
     /// A placeholder for a type that was not syntactically well-formed
@@ -129,6 +134,7 @@ impl TyKind {
             TyKind::Name(..) => "type".into(),
             TyKind::Arrow(..) => "arrow".into(),
             TyKind::Forall(..) => "forall".into(),
+            TyKind::Data(..) => "type".into(),
             TyKind::Err => "invalid type".into(),
         }
     }
@@ -160,6 +166,13 @@ pub enum Res {
     ///
     /// **Belongs to the type namespace.**
     TyVar(AstId),
+    /// A generic parameter.
+    ///
+    /// Similarly to [`Res::Local`], the [`AstId`] here refers to the
+    /// datatype definition where the type variable is declared.
+    ///
+    /// **Belongs to the type namespace.**
+    Generic(AstId, usize),
     /// A dummy [`Res`] variant representing a resolution error, so compilation
     /// can continue to gather further errors before crashing.
     ///
@@ -171,7 +184,7 @@ impl Res {
     pub fn id(self) -> Option<AstId> {
         match self {
             Res::PrimTy(_) | Res::Err | Res::PrimFunc(_) => None,
-            Res::Defn(_, id) | Res::Local(id) | Res::TyVar(id) => Some(id),
+            Res::Defn(_, id) | Res::Local(id) | Res::TyVar(id) | Res::Generic(id, _) => Some(id),
         }
     }
 }
@@ -193,6 +206,7 @@ pub enum DefnKind {
     Enum,
     EnumConstructor(usize),
     EnumRecursor,
+    Generic(usize),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -225,7 +239,9 @@ impl Node {
             },
             Self::Ty(id) => match gcx.arenas.ast.ty(id).kind {
                 TyKind::Unit | TyKind::Arrow(_, _) | TyKind::Err => None,
-                TyKind::Name(ident) | TyKind::Forall(ident, _) => Some(ident),
+                TyKind::Name(ident) | TyKind::Forall(ident, _) | TyKind::Data(ident, _) => {
+                    Some(ident)
+                }
             },
             Self::Syn(id) => gcx.arenas.ast.syn(id).ident,
         }
@@ -295,7 +311,7 @@ impl AstArenas {
     }
 
     pub fn ty(&self, id: Id<Ty>) -> Ty {
-        self.ty.borrow()[id]
+        self.ty.borrow()[id].clone()
     }
 
     pub fn syn(&self, id: Id<Synthetic>) -> Synthetic {

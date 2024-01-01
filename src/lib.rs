@@ -138,7 +138,8 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
 
         let mut w = Vec::new();
         //let doc = eval::pretty::pp_expr(0, gcx, &mut ecx, expr);
-        let doc = typeck::pretty::pp_expr_no_norm(0, gcx, expr);
+        let doc =
+            typeck::pretty::pp_expr(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), expr);
         doc.render(80, &mut w).unwrap();
         println!("{}", String::from_utf8(w).unwrap());
         // println!("{:#?}", items);
