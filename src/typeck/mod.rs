@@ -9,10 +9,9 @@ use crate::{
     ast::{AstId, DefnKind, ItemKind, Node, PrimTy, Recursive, Res},
     ctxt::GlobalCtxt,
     parse::Span,
-    resolve,
     typeck::{
         ast::{DeBruijnIdx, ExprDeferredError},
-        norm::{quote_ty, Closure},
+        norm::quote_ty,
     },
 };
 
@@ -64,11 +63,14 @@ impl TypeckCtxt {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ElabError;
+
 pub fn surf_ty_to_core(
     gcx: &GlobalCtxt,
     mut tcx: TypeckCtxt,
     t: Id<surf::Ty>,
-) -> Result<Id<ast::Ty>, ()> {
+) -> Result<Id<ast::Ty>, ElabError> {
     // {
     //     let mut w = Vec::new();
     //     let doc = crate::ast::pretty::pp_ty(0, gcx, t);
@@ -97,7 +99,7 @@ pub fn surf_ty_to_core(
                     .finish();
                 gcx.drcx.borrow_mut().report_syncd(report);
 
-                return Err(());
+                return Err(ElabError);
             }
 
             let res_data = gcx.arenas.ast.res_data.borrow();
@@ -452,7 +454,7 @@ pub fn surf_ty_to_core(
                             drcx.report_syncd(diag);
                         }
                         // TODO: error this
-                        return Err(());
+                        return Err(ElabError);
                     } else {
                         tcx.ty_aliases.push_back((*id, t.span));
                     }
@@ -510,7 +512,7 @@ pub fn check(
     ie: Id<surf::Expr>,
     it: Id<VTy>,
     type_expectation: TypeExpectation,
-) -> Result<Id<ast::Expr>, ()> {
+) -> Result<Id<ast::Expr>, ElabError> {
     use ast::ExprKind as CE;
     use ast::TyKind as CT;
     use surf::ExprKind as SE;
@@ -697,7 +699,7 @@ pub fn check(
                     gcx.drcx.borrow_mut().report_syncd(report);
                 }
 
-                return Err(());
+                return Err(ElabError);
             }
             e
         }
@@ -713,7 +715,7 @@ pub fn infer(
     gcx: &GlobalCtxt,
     tcx: TypeckCtxt,
     ie: Id<surf::Expr>,
-) -> Result<(Id<ast::Expr>, Id<VTy>), ()> {
+) -> Result<(Id<ast::Expr>, Id<VTy>), ElabError> {
     // {
     //     let mut w = Vec::new();
     //     let doc = crate::ast::pretty::pp_expr(0, gcx, ie);
@@ -834,7 +836,7 @@ pub fn infer(
                         unreachable!()
                     };
 
-                    let dummy_span = Span((u32::MAX..u32::MAX).into());
+                    let _dummy_span = Span((u32::MAX..u32::MAX).into());
 
                     let id = *id;
 
@@ -1028,7 +1030,7 @@ pub fn infer(
                             .finish();
                         gcx.drcx.borrow_mut().report_syncd(report);
 
-                        return Err(());
+                        return Err(ElabError);
                     }
                     (a, b, mv)
                 }
@@ -1107,7 +1109,7 @@ pub fn infer_and_inst(
     gcx: &GlobalCtxt,
     tcx: TypeckCtxt,
     ie: Id<surf::Expr>,
-) -> Result<(Id<ast::Expr>, Id<VTy>), ()> {
+) -> Result<(Id<ast::Expr>, Id<VTy>), ElabError> {
     let (e, t) = infer(gcx, tcx.clone(), ie)?;
     let sp = gcx.arenas.core.expr(e).span;
     let (t, mv) = eagerly_instantiate(gcx, tcx, t, sp);

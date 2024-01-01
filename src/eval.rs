@@ -4,12 +4,12 @@ use calypso_base::symbol::Ident;
 use id_arena::Id;
 
 use crate::{
-    ast::{AstId, ItemKind, Node, DUMMY_AST_ID},
+    ast::{AstId, ItemKind, Node},
     ctxt::GlobalCtxt,
     parse::Span,
     typeck::{
         ast::{DeBruijnLvl, Expr, ExprKind},
-        norm::{lvl2ix, VTy},
+        norm::lvl2ix,
     },
 };
 

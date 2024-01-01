@@ -9,7 +9,7 @@
 use ariadne::{Color, Config, Label, LabelAttach, ReportKind};
 use calypso_base::symbol::{Ident, Symbol};
 use id_arena::Id;
-use im::HashSet;
+
 use std::collections::HashMap;
 
 use crate::{
@@ -111,7 +111,7 @@ struct ResolutionCtxt<'gcx> {
 impl<'gcx> ResolutionCtxt<'gcx> {
     fn report_duplicate_name(
         &self,
-        item: Item,
+        _item: Item,
         ident: Ident,
         kind: DefnKind,
         duplicate: AstId,
@@ -227,7 +227,7 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                     }
                     self.defn_id_to_span.insert(item.id, item.span);
                 }
-                ItemKind::Enum(ref generics, ref cons, _) => {
+                ItemKind::Enum(ref _generics, ref cons, _) => {
                     if let Some(&(defn_id, defn_kind)) = self.type_ns.get(&item.ident.symbol) {
                         self.report_duplicate_name(
                             item.clone(),

@@ -1,19 +1,12 @@
-use std::{
-    cell::RefCell,
-    hash::{self, Hash},
-    rc::Rc,
-};
+use std::{cell::RefCell, hash::Hash, rc::Rc};
 
-use ariadne::{Color, Label, Report, ReportBuilder, ReportKind};
+use ariadne::{Color, Label, Report, ReportKind};
 use calypso_base::symbol::Symbol;
 use id_arena::{Arena, Id};
 
 use crate::{ast::AstId, ctxt::GlobalCtxt, parse::Span};
 
-use super::{
-    norm::{eval_ty, nf_ty_force},
-    TypeckCtxt,
-};
+use super::{norm::nf_ty_force, TypeckCtxt};
 
 index_vec::define_index_type! {
     pub struct DeBruijnIdx = u32;
@@ -92,6 +85,7 @@ pub enum ExprDeferredError {
 }
 
 impl ExprDeferredError {
+    #[allow(irrefutable_let_patterns)]
     pub fn build(self, gcx: &GlobalCtxt, span: Span) -> Report<'static, Span> {
         if let ExprDeferredError::Discarded(t, tcx) = self {
             let mut w = Vec::new();
@@ -160,7 +154,7 @@ pub struct MetaInfo {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CoreAstArenas {
     pub expr: RefCell<Arena<Expr>>,
     pub ty: RefCell<Arena<Ty>>,
@@ -175,14 +169,5 @@ impl CoreAstArenas {
 
     pub fn ty(&self, id: Id<Ty>) -> Ty {
         self.ty.borrow()[id].clone()
-    }
-}
-
-impl Default for CoreAstArenas {
-    fn default() -> Self {
-        Self {
-            expr: Default::default(),
-            ty: Default::default(),
-        }
     }
 }

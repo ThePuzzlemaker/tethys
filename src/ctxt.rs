@@ -1,12 +1,11 @@
 use std::cell::RefCell;
 
-use calypso_base::symbol::Symbol;
-use id_arena::{Arena, Id};
+
+
 
 use crate::{
     ast::AstArenas,
     diag::DiagReportCtxt,
-    intern::Interner,
     typeck::{ast::CoreAstArenas, norm::TyckArenas},
 };
 

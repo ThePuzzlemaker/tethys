@@ -1,11 +1,10 @@
 use std::rc::Rc;
 
-use id_arena::Id;
 use pretty::{DocAllocator, RcAllocator, RcDoc};
 
-use crate::ctxt::GlobalCtxt;
+use crate::{ctxt::GlobalCtxt, typeck::ast::DeBruijnLvl};
 
-use super::{apply_closure, EvalCtx, VExpr};
+use super::{EvalCtx, VExpr};
 
 fn maybe_paren(x: usize, y: usize, doc: RcDoc<'_>) -> RcDoc<'_> {
     if y < x {
@@ -20,6 +19,7 @@ const PREC_EXPR_APPL: usize = 3;
 const PREC_EXPR_LAMBDA: usize = 2;
 const PREC_EXPR_LET: usize = 1;
 
+#[allow(clippy::only_used_in_recursion)]
 pub fn pp_expr<'a>(
     prec: usize,
     gcx: &'a GlobalCtxt,
@@ -42,7 +42,13 @@ pub fn pp_expr<'a>(
         } => RcDoc::text(format!("<id={id},branch={branch},vector={vector:?}>")),
         VExpr::Free(ident) => RcDoc::text(ident.as_str()),
         VExpr::Lam(x, body) => {
-            let body = crate::typeck::pretty::pp_expr_no_norm(PREC_EXPR_LET, gcx, body.1);
+            let body = crate::typeck::pretty::pp_expr(
+                PREC_EXPR_LET,
+                gcx,
+                DeBruijnLvl::from(0usize),
+                im::Vector::new(),
+                body.1,
+            );
             maybe_paren(
                 prec,
                 PREC_EXPR_LAMBDA,

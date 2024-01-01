@@ -31,5 +31,5 @@ def pred : Nat -> Nat
 def fact : Nat -> Nat
     	 = λn.Nat n (Succ Zero) (λm.mult n (fact m))
 
-def list : List[Nat] = (Cons Zero (Cons (fact (Succ (Succ (Succ Zero)))) Nil))
+def list : List[Nat] = (Cons Zero (Cons (Succ Zero) Nil))
 def main : _ = optBind (tl list) hd

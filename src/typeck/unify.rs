@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use id_arena::Id;
 
-use crate::{ast::AstId, ctxt::GlobalCtxt, parse::Span, typeck::norm::quote_ty};
+use crate::{ast::AstId, ctxt::GlobalCtxt};
 
 use super::{
     ast::{DeBruijnLvl, MetaEntry, MetaVar, Ty, TyKind},
