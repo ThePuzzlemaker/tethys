@@ -7,7 +7,7 @@ rust-version = "1.66.1"
 license = "BSD-3-Clause"
 
 [dependencies]
-ariadne = "0.3.0"
+ariadne = "0.4.0"
 logos = "0.12.1"
 derive_more = "0.99.17"
 pretty = "0.12.3"
