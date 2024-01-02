@@ -3,7 +3,7 @@ use pretty::{DocAllocator, RcAllocator, RcDoc};
 
 use crate::ctxt::GlobalCtxt;
 
-use super::{Expr, ExprKind, Item, ItemKind, Ty, TyKind};
+use super::{BinOpKind, Expr, ExprKind, Item, ItemKind, Ty, TyKind};
 
 const PREC_TY_PRIMARY: usize = 3;
 const PREC_TY_ARROW: usize = 2;
@@ -68,10 +68,32 @@ pub fn pp_ty(prec: usize, gcx: &GlobalCtxt, ty: Id<Ty>) -> RcDoc<'_> {
     }
 }
 
-const PREC_EXPR_PRIMARY: usize = 4;
-const PREC_EXPR_APPL: usize = 3;
-const PREC_EXPR_LAMBDA: usize = 2;
-const PREC_EXPR_LET: usize = 1;
+pub const PREC_EXPR_PRIMARY: usize = 150;
+pub const PREC_EXPR_APPL: usize = 140;
+pub const PREC_EXPR_UNARY: usize = 120;
+pub const PREC_EXPR_LAMBDA: usize = 20;
+pub const PREC_EXPR_IF: usize = 15;
+pub const PREC_EXPR_LET: usize = 10;
+
+pub fn prec_binop(kind: BinOpKind) -> usize {
+    match kind {
+        BinOpKind::LogicalOr => 30,
+        BinOpKind::LogicalAnd => 40,
+        BinOpKind::Equal
+        | BinOpKind::NotEqual
+        | BinOpKind::LessThan
+        | BinOpKind::LessEqual
+        | BinOpKind::GreaterThan
+        | BinOpKind::GreaterEqual => 50,
+        BinOpKind::BitOr => 60,
+        BinOpKind::BitXor => 70,
+        BinOpKind::BitAnd => 80,
+        BinOpKind::BitShiftLeft | BinOpKind::BitShiftRight => 90,
+        BinOpKind::Add | BinOpKind::Subtract => 100,
+        BinOpKind::Multiply | BinOpKind::Divide | BinOpKind::Modulo => 110,
+        BinOpKind::Power => 130,
+    }
+}
 
 pub fn pp_expr(prec: usize, gcx: &GlobalCtxt, expr: Id<Expr>) -> RcDoc<'_> {
     match gcx.arenas.ast.expr(expr).kind {
@@ -96,6 +118,89 @@ pub fn pp_expr(prec: usize, gcx: &GlobalCtxt, expr: Id<Expr>) -> RcDoc<'_> {
                     .append(RcAllocator.nil().append(x))
                     .align()
                     .group()
+                    .into_doc(),
+            )
+        }
+        ExprKind::BinaryOp { left, kind, right } => {
+            // TODO: precedence
+            let left = pp_expr(prec_binop(kind), gcx, left);
+            let right = pp_expr(prec_binop(kind), gcx, right);
+            maybe_paren(
+                prec,
+                prec_binop(kind),
+                left.append(RcDoc::space())
+                    .append(match kind {
+                        BinOpKind::LogicalOr => "||",
+                        BinOpKind::LogicalAnd => "&&",
+                        BinOpKind::BitOr => "|",
+                        BinOpKind::BitAnd => "&",
+                        BinOpKind::BitXor => "^",
+                        BinOpKind::Equal => "==",
+                        BinOpKind::NotEqual => "!=",
+                        BinOpKind::LessThan => "<",
+                        BinOpKind::GreaterThan => ">",
+                        BinOpKind::LessEqual => "<=",
+                        BinOpKind::GreaterEqual => ">=",
+                        BinOpKind::BitShiftLeft => "<<",
+                        BinOpKind::BitShiftRight => ">>",
+                        BinOpKind::Add => "+",
+                        BinOpKind::Subtract => "-",
+                        BinOpKind::Multiply => "*",
+                        BinOpKind::Divide => "/",
+                        BinOpKind::Modulo => "%",
+                        BinOpKind::Power => "**",
+                    })
+                    .append(RcDoc::space())
+                    .append(right),
+            )
+        }
+        ExprKind::UnaryMinus(expr) => maybe_paren(
+            prec,
+            PREC_EXPR_UNARY,
+            RcAllocator
+                .text("-")
+                .append(pp_expr(PREC_EXPR_UNARY, gcx, expr))
+                .into_doc(),
+        ),
+
+        ExprKind::UnaryNot(expr) => maybe_paren(
+            prec,
+            PREC_EXPR_UNARY,
+            RcAllocator
+                .text("!")
+                .append(pp_expr(PREC_EXPR_UNARY, gcx, expr))
+                .into_doc(),
+        ),
+        ExprKind::If(cond, then, then_else) => {
+            let cond = pp_expr(PREC_EXPR_LAMBDA, gcx, cond);
+            let then = pp_expr(PREC_EXPR_LET, gcx, then);
+            let then_else = pp_expr(PREC_EXPR_LET, gcx, then_else);
+
+            maybe_paren(
+                prec,
+                PREC_EXPR_IF,
+                RcAllocator
+                    .text("if")
+                    .append(RcDoc::space())
+                    .append(cond)
+                    .append(RcDoc::softline())
+                    .append(
+                        RcAllocator
+                            .text("then")
+                            .append(RcDoc::space())
+                            .append(then)
+                            .into_doc(),
+                    )
+                    .align()
+                    .append(RcDoc::softline())
+                    .append(
+                        RcAllocator
+                            .text("else")
+                            .append(RcDoc::space())
+                            .append(then_else)
+                            .into_doc(),
+                    )
+                    .align()
                     .into_doc(),
             )
         }
@@ -134,6 +239,7 @@ pub fn pp_expr(prec: usize, gcx: &GlobalCtxt, expr: Id<Expr>) -> RcDoc<'_> {
             )
         }
         ExprKind::Number(n) => RcDoc::text(n.to_string()),
+        ExprKind::Boolean(b) => RcDoc::text(b.to_string()),
         ExprKind::Err => RcDoc::text("<syntax error>"),
     }
 }

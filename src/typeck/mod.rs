@@ -6,7 +6,7 @@ use id_arena::Id;
 
 pub use crate::ast as surf;
 use crate::{
-    ast::{AstId, DefnKind, ItemKind, Node, PrimTy, Recursive, Res},
+    ast::{AstId, BinOpKind, DefnKind, ItemKind, Node, PrimTy, Recursive, Res},
     ctxt::GlobalCtxt,
     parse::Span,
     typeck::{
@@ -355,7 +355,9 @@ pub fn surf_ty_to_core(
             let res_data = gcx.arenas.ast.res_data.borrow();
             let res = res_data.get_by_id(t.id).unwrap();
             match res {
-                Res::PrimTy(PrimTy::Integer) => todo!(),
+                Res::PrimTy(prim) => lower_ty(gcx, t.id, |cid| {
+                    ast::Ty::new(gcx, cid, CT::Primitive(*prim), t.span)
+                }),
                 Res::Generic(id, ix) => tcx
                     .generic_params
                     .iter()
@@ -670,7 +672,7 @@ pub fn check(
                     .with_label(
                         Label::new(span)
                             .with_color(Color::Red)
-                            .with_message(format!("found type {inferred_s}"))
+                            .with_message(format!("found type `{inferred_s}`"))
                             .with_order(0),
                     );
 
@@ -678,7 +680,7 @@ pub fn check(
                     TypeExpectation::Definition(span) => report.with_label(
                         Label::new(span)
                             .with_color(Color::Blue)
-                            .with_message(format!("expected type {expected_s}"))
+                            .with_message(format!("expected type `{expected_s}`"))
                             .with_order(1),
                     ),
                     TypeExpectation::FunctionApp(span, f_span) => report
@@ -686,7 +688,7 @@ pub fn check(
                             Label::new(span)
                                 .with_color(Color::Blue)
                                 .with_message(format!(
-                                    "this function expected argument type {expected_s}"
+                                    "this function expected argument type `{expected_s}`"
                                 ))
                                 .with_order(1),
                         )
@@ -695,6 +697,27 @@ pub fn check(
                                 .with_color(Color::Green)
                                 .with_message("argument type defined here"),
                         ),
+                    TypeExpectation::BinaryOp(span, op_type) => report
+                        .with_label(
+                            Label::new(span)
+                                .with_color(Color::Blue)
+                                .with_message(format!("this operation had type `{op_type}`"))
+                                .with_order(-1),
+                        )
+                        .with_config(Config::default().with_label_attach(LabelAttach::End)),
+                    TypeExpectation::IfCondition(if_span) => report.with_label(
+                        Label::new(if_span.with_hi(span.hi()).into())
+                            .with_color(Color::Blue)
+                            .with_message("expected type `Boolean` due to this `if`"),
+                    ),
+                    TypeExpectation::IfElse(span) => report
+                        .with_label(
+                            Label::new(span)
+                                .with_color(Color::Blue)
+                                .with_message(format!("expected type `{expected_s}`"))
+                                .with_order(1),
+                        )
+                        .with_note("`if` branches must have the same type"),
                 };
 
                 match err {
@@ -776,6 +799,9 @@ pub fn check(
 pub enum TypeExpectation {
     Definition(Span),
     FunctionApp(Span, Span),
+    BinaryOp(Span, &'static str),
+    IfCondition(Span),
+    IfElse(Span),
 }
 
 pub fn infer(
@@ -1133,7 +1159,7 @@ pub fn infer(
                             .with_label(
                                 Label::new(span)
                                     .with_color(Color::Red)
-                                    .with_message(format!("found type {inferred}"))
+                                    .with_message(format!("found type `{inferred}`"))
                                     .with_order(1),
                             )
                             .with_label(
@@ -1231,6 +1257,194 @@ pub fn infer(
             (
                 ast::Expr::new(gcx, cid, CE::Let(cid, x, t_e1, e1, e2), e.span),
                 vt_e2,
+            )
+        }
+        SE::Number(v) => (
+            ast::Expr::new(gcx, gcx.arenas.core.lower_id(e.id), CE::Number(v), e.span),
+            VTy::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                VTyKind::Primitive(PrimTy::Integer),
+                e.span,
+            ),
+        ),
+        SE::BinaryOp {
+            left,
+            kind:
+                kind @ (BinOpKind::Add
+                | BinOpKind::Subtract
+                | BinOpKind::Multiply
+                | BinOpKind::Divide
+                | BinOpKind::BitAnd
+                | BinOpKind::BitOr
+                | BinOpKind::BitXor
+                | BinOpKind::BitShiftLeft
+                | BinOpKind::BitShiftRight
+                | BinOpKind::Power
+                | BinOpKind::Modulo),
+            right,
+        } => {
+            let int = VTy::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                VTyKind::Primitive(PrimTy::Integer),
+                e.span,
+            );
+            // TODO: internal op's span
+            let left = check(
+                gcx,
+                tcx.clone(),
+                left,
+                int,
+                TypeExpectation::BinaryOp(e.span, "Integer -> Integer -> Integer"),
+            )?;
+
+            let right = check(
+                gcx,
+                tcx.clone(),
+                right,
+                int,
+                TypeExpectation::BinaryOp(e.span, "Integer -> Integer -> Integer"),
+            )?;
+
+            (
+                ast::Expr::new(
+                    gcx,
+                    gcx.arenas.core.lower_id(e.id),
+                    CE::BinaryOp { left, kind, right },
+                    e.span,
+                ),
+                int,
+            )
+        }
+        SE::BinaryOp {
+            left,
+            kind: kind @ (BinOpKind::LogicalOr | BinOpKind::LogicalAnd),
+            right,
+        } => {
+            let bool_ty = VTy::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                VTyKind::Primitive(PrimTy::Boolean),
+                e.span,
+            );
+            // TODO: internal op's span
+            let left = check(
+                gcx,
+                tcx.clone(),
+                left,
+                bool_ty,
+                TypeExpectation::BinaryOp(e.span, "Boolean -> Boolean -> Boolean"),
+            )?;
+
+            let right = check(
+                gcx,
+                tcx.clone(),
+                right,
+                bool_ty,
+                TypeExpectation::BinaryOp(e.span, "Boolean -> Boolean -> Boolean"),
+            )?;
+
+            (
+                ast::Expr::new(
+                    gcx,
+                    gcx.arenas.core.lower_id(e.id),
+                    CE::BinaryOp { left, kind, right },
+                    e.span,
+                ),
+                bool_ty,
+            )
+        }
+        SE::BinaryOp {
+            left,
+            kind:
+                kind @ (BinOpKind::Equal
+                | BinOpKind::NotEqual
+                | BinOpKind::LessThan
+                | BinOpKind::LessEqual
+                | BinOpKind::GreaterThan
+                | BinOpKind::GreaterEqual),
+            right,
+        } => {
+            let int = VTy::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                VTyKind::Primitive(PrimTy::Integer),
+                e.span,
+            );
+            // TODO: internal op's span
+            let left = check(
+                gcx,
+                tcx.clone(),
+                left,
+                int,
+                TypeExpectation::BinaryOp(e.span, "Integer -> Integer -> Boolean"),
+            )?;
+
+            let right = check(
+                gcx,
+                tcx.clone(),
+                right,
+                int,
+                TypeExpectation::BinaryOp(e.span, "Integer -> Integer -> Boolean"),
+            )?;
+
+            (
+                ast::Expr::new(
+                    gcx,
+                    gcx.arenas.core.lower_id(e.id),
+                    CE::BinaryOp { left, kind, right },
+                    e.span,
+                ),
+                VTy::new(
+                    gcx,
+                    gcx.arenas.core.next_id(),
+                    VTyKind::Primitive(PrimTy::Boolean),
+                    e.span,
+                ),
+            )
+        }
+        SE::Boolean(v) => (
+            ast::Expr::new(gcx, gcx.arenas.core.lower_id(e.id), CE::Boolean(v), e.span),
+            VTy::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                VTyKind::Primitive(PrimTy::Boolean),
+                e.span,
+            ),
+        ),
+        // TODO: if check rule
+        SE::If(cond, then, then_else) => {
+            let cond = check(
+                gcx,
+                tcx.clone(),
+                cond,
+                VTy::new(
+                    gcx,
+                    gcx.arenas.core.next_id(),
+                    VTyKind::Primitive(PrimTy::Boolean),
+                    Span((u32::MAX..u32::MAX).into()),
+                ),
+                TypeExpectation::IfCondition(e.span),
+            )?;
+
+            let (then, vt_then) = infer(gcx, tcx.clone(), then)?;
+            let then_else = check(
+                gcx,
+                tcx.clone(),
+                then_else,
+                vt_then,
+                TypeExpectation::IfElse(gcx.arenas.core.expr(then).span),
+            )?;
+
+            (
+                ast::Expr::new(
+                    gcx,
+                    gcx.arenas.core.lower_id(e.id),
+                    CE::If(cond, then, then_else),
+                    e.span,
+                ),
+                vt_then,
             )
         }
         _ => todo!("{:#?}", e),

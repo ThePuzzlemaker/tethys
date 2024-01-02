@@ -13,25 +13,25 @@ def hd : forall 'T. List['T] -> Option['T]
        = λl. List l None (λh _.Some h)
 def tl : forall 'T. List['T] -> Option[List['T]]
        = λl. List l None (λ_ t.Some t)
-def length : forall 'T. List['T] -> Nat
-    	   = λl. List l (λ_.Zero) (λ_ t _.Succ (length t)) ()
-
-enum Nat = Zero
-         | Succ Nat
+def length : forall 'T. List['T] -> Integer
+    	   = λl. List l 0 (λ_ t.1 + (length t))
+def map : forall 'T 'U. List['T] -> ('T -> 'U) -> List['U]
+    	= λl f. List l Nil (λh t.Cons (f h) (map t f))
 	 
 def id    : forall 'a.'a -> 'a = λx.x
 def const : forall 'a.'a -> 'a -> 'a = λx y.x
 
-def add  : Nat -> Nat -> Nat
-         = λn m.Nat n m (λn.Succ (add n m))
-def mult : Nat -> Nat -> Nat
-         = λn m.Nat n (Zero) (λn.add m (mult n m))
-def pred : Nat -> Nat
-    	 = λn.Nat n Zero id
-def fact : Nat -> Nat
-    	 = λn.Nat n (Succ Zero) (λm.mult n (fact m))
+def foo : Integer -> Boolean = λx. if x == 0 then false else true
 
-def list : List[Nat] = (Cons Zero (Cons (Succ Zero) Nil))
-def main : _ = optBind (tl list) hd
-# def foo : () -> () = \x.foo ()
-# def main : () = foo ()
+def fact : Integer -> Integer
+    	 = λn.if n == 0 then 1 else n * fact (n - 1)
+
+def list : List[Integer] = (Cons 0 (Cons 1 (Cons 2 (Cons 3 (Cons 4 Nil)))))
+def main : _ = map list fact
+# def main : _ = length list
+
+# def foo : forall 'T 'U. List['T] -> ('T -> 'U) -> List['U]
+#     	= λl f. match l with
+# 	        | Nil -> Nil
+# 	        | Cons h t -> Cons (f h) (foo t)
+# 	        end

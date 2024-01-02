@@ -7,7 +7,7 @@ use calypso_base::symbol::Ident;
 use id_arena::Id;
 
 use crate::{
-    ast::{AstId, ItemKind, Node},
+    ast::{AstId, BinOpKind, ItemKind, Node},
     ctxt::GlobalCtxt,
     parse::Span,
     typeck::{
@@ -47,7 +47,20 @@ pub enum VExpr {
         spine: im::Vector<Rc<VExpr>>,
     },
     Free(AstId),
+    Number(i64),
     RecursionBarrier(AstId, Weak<VExpr>),
+    BinaryOp {
+        left: Rc<VExpr>,
+        kind: BinOpKind,
+        right: Rc<VExpr>,
+    },
+    BinaryOpThunk {
+        left: Rc<VExpr>,
+        kind: BinOpKind,
+        right: Id<Expr>,
+    },
+    Boolean(bool),
+    IfThunk(Rc<VExpr>, Id<Expr>, Id<Expr>),
 }
 
 fn apply_closure(
@@ -204,6 +217,8 @@ fn force_barrier(ecx: &mut EvalCtx, e1: Rc<VExpr>) -> Rc<VExpr> {
 pub fn eval_expr(gcx: &GlobalCtxt, ecx: &mut EvalCtx, env: Env, expr: Id<Expr>) -> Rc<VExpr> {
     match gcx.arenas.core.expr(expr).kind {
         ExprKind::Unit => Rc::new(VExpr::Unit),
+        ExprKind::Number(v) => Rc::new(VExpr::Number(v)),
+        ExprKind::Boolean(b) => Rc::new(VExpr::Boolean(b)),
         ExprKind::Var(_, i) => env.get(i.index()).unwrap().clone(),
         ExprKind::Lam(x, i, b) => Rc::new(VExpr::Lam(x, i, Closure(env.clone(), b))),
         ExprKind::App(f, x) => {
@@ -260,9 +275,133 @@ pub fn eval_expr(gcx: &GlobalCtxt, ecx: &mut EvalCtx, env: Env, expr: Id<Expr>) 
                 })
             }
         }
-
         ExprKind::EnumRecursor(id) => Rc::new(VExpr::EnumRecursor(id)),
         ExprKind::Err(_) => todo!(),
+        ExprKind::BinaryOp {
+            left,
+            kind: BinOpKind::LogicalOr,
+            right,
+        } => {
+            let left = eval_expr(gcx, ecx, env.clone(), left);
+            let left = force_barrier(ecx, left);
+            match &*left {
+                VExpr::Boolean(false) => eval_expr(gcx, ecx, env.clone(), right),
+                VExpr::Boolean(true) => Rc::new(VExpr::Boolean(true)),
+                _ => Rc::new(VExpr::BinaryOpThunk {
+                    left: left.clone(),
+                    kind: BinOpKind::LogicalOr,
+                    right,
+                }),
+            }
+        }
+        ExprKind::BinaryOp {
+            left,
+            kind: BinOpKind::LogicalAnd,
+            right,
+        } => {
+            let left = eval_expr(gcx, ecx, env.clone(), left);
+            let left = force_barrier(ecx, left);
+            match &*left {
+                VExpr::Boolean(true) => eval_expr(gcx, ecx, env.clone(), right),
+                VExpr::Boolean(false) => Rc::new(VExpr::Boolean(false)),
+                _ => Rc::new(VExpr::BinaryOpThunk {
+                    left: left.clone(),
+                    kind: BinOpKind::LogicalAnd,
+                    right,
+                }),
+            }
+        }
+        ExprKind::BinaryOp { left, kind, right } => {
+            let left = eval_expr(gcx, ecx, env.clone(), left);
+            let left = force_barrier(ecx, left);
+            let right = eval_expr(gcx, ecx, env.clone(), right);
+            let right = force_barrier(ecx, right);
+            eval_binop(gcx, ecx, left, kind, right)
+        }
+        ExprKind::If(cond, then, then_else) => {
+            let cond = eval_expr(gcx, ecx, env.clone(), cond);
+            let cond = force_barrier(ecx, cond);
+            match &*cond {
+                VExpr::Boolean(true) => eval_expr(gcx, ecx, env.clone(), then),
+                VExpr::Boolean(false) => eval_expr(gcx, ecx, env.clone(), then_else),
+                _ => Rc::new(VExpr::IfThunk(cond.clone(), then, then_else)),
+            }
+        }
+    }
+}
+
+fn eval_binop(
+    _gcx: &GlobalCtxt,
+    _ecx: &mut EvalCtx,
+    left: Rc<VExpr>,
+    kind: BinOpKind,
+    right: Rc<VExpr>,
+) -> Rc<VExpr> {
+    match (&*left, kind, &*right) {
+        (VExpr::Number(lhs), BinOpKind::Add, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs + rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::Subtract, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs - rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::Multiply, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs * rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::Divide, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs / rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::Power, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs.pow((*rhs).try_into().unwrap())))
+        }
+        (VExpr::Number(lhs), BinOpKind::BitAnd, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs & rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::BitOr, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs | rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::BitXor, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs ^ rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::BitShiftRight, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs >> rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::BitShiftLeft, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs << rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::Modulo, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Number(lhs % rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::Equal, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Boolean(lhs == rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::NotEqual, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Boolean(lhs != rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::LessThan, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Boolean(lhs < rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::GreaterThan, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Boolean(lhs > rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::LessEqual, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Boolean(lhs <= rhs))
+        }
+        (VExpr::Number(lhs), BinOpKind::GreaterEqual, VExpr::Number(rhs)) => {
+            Rc::new(VExpr::Boolean(lhs >= rhs))
+        }
+        // TODO: shortcircuit
+        (VExpr::Boolean(lhs), BinOpKind::LogicalOr, VExpr::Boolean(rhs)) => {
+            Rc::new(VExpr::Boolean(*lhs || *rhs))
+        }
+        (VExpr::Boolean(lhs), BinOpKind::LogicalAnd, VExpr::Boolean(rhs)) => {
+            Rc::new(VExpr::Boolean(*lhs && *rhs))
+        }
+
+        _ => Rc::new(VExpr::BinaryOp {
+            left: left.clone(),
+            kind,
+            right: right.clone(),
+        }),
     }
 }
 
@@ -275,6 +414,8 @@ pub fn quote_expr(
     let sp = Span((u32::MAX..u32::MAX).into());
     match &*expr {
         VExpr::Unit => Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Unit, sp),
+        VExpr::Number(v) => Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Number(*v), sp),
+        VExpr::Boolean(b) => Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Boolean(*b), sp),
         VExpr::Var(id, lvl) => Expr::new(
             gcx,
             gcx.arenas.core.next_id(),
@@ -282,6 +423,7 @@ pub fn quote_expr(
             sp,
         ),
         VExpr::Lam(x, i, b) => {
+            // TODO: make a subst function so this doesn't eval further than necessary
             ecx.norec = true;
             let b = apply_closure(gcx, ecx, b.clone(), &Rc::new(VExpr::Var(*x, l)));
             ecx.norec = false;
@@ -344,6 +486,42 @@ pub fn quote_expr(
         VExpr::RecursionBarrier(id, v) => {
             let _ = v.upgrade().unwrap();
             Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Free(*id), sp)
+        }
+        VExpr::BinaryOp { left, kind, right } => {
+            let left = quote_expr(gcx, ecx, l, left.clone());
+            let right = quote_expr(gcx, ecx, l, right.clone());
+            Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                ExprKind::BinaryOp {
+                    left,
+                    kind: *kind,
+                    right,
+                },
+                sp,
+            )
+        }
+        VExpr::BinaryOpThunk { left, kind, right } => {
+            let left = quote_expr(gcx, ecx, l, left.clone());
+            Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                ExprKind::BinaryOp {
+                    left,
+                    kind: *kind,
+                    right: *right,
+                },
+                sp,
+            )
+        }
+        VExpr::IfThunk(cond, then, then_else) => {
+            let cond = quote_expr(gcx, ecx, l, cond.clone());
+            Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                ExprKind::If(cond, *then, *then_else),
+                sp,
+            )
         }
     }
 }

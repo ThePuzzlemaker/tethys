@@ -9,7 +9,11 @@ use ariadne::{Color, Label, Report, ReportKind};
 use calypso_base::symbol::{Ident, Symbol};
 use id_arena::{Arena, Id};
 
-use crate::{ast::AstId, ctxt::GlobalCtxt, parse::Span};
+use crate::{
+    ast::{AstId, BinOpKind, PrimTy},
+    ctxt::GlobalCtxt,
+    parse::Span,
+};
 
 use super::{norm::nf_ty_force, TypeckCtxt};
 
@@ -67,6 +71,7 @@ impl Ty {
 #[derive(Clone, Debug)]
 pub enum TyKind {
     Unit,
+    Primitive(PrimTy),
     Var(CoreAstId, DeBruijnIdx),
     Arrow(Id<Ty>, Id<Ty>),
     Forall(CoreAstId, Ident, Id<Ty>),
@@ -116,7 +121,15 @@ pub enum ExprKind {
     Free(AstId),
     EnumConstructor(AstId, usize),
     EnumRecursor(AstId),
+    Number(i64),
+    BinaryOp {
+        left: Id<Expr>,
+        kind: BinOpKind,
+        right: Id<Expr>,
+    },
+    Boolean(bool),
     Err(ExprDeferredError),
+    If(Id<Expr>, Id<Expr>, Id<Expr>),
 }
 
 #[derive(Clone, Debug)]
@@ -286,7 +299,11 @@ impl Node {
                 | ExprKind::Free(_)
                 | ExprKind::EnumConstructor(_, _)
                 | ExprKind::EnumRecursor(_)
-                | ExprKind::Err(_) => None,
+                | ExprKind::Err(_)
+                | ExprKind::Number(_)
+                | ExprKind::BinaryOp { .. }
+                | ExprKind::Boolean(_)
+                | ExprKind::If(..) => None,
                 ExprKind::Lam(_, id, _)
                 | ExprKind::Let(_, id, _, _, _)
                 | ExprKind::Fix(_, id, _)
@@ -299,7 +316,8 @@ impl Node {
                 | TyKind::Meta(_, _)
                 | TyKind::InsertedMeta(_)
                 | TyKind::Free(_)
-                | TyKind::Enum(_, _) => None,
+                | TyKind::Enum(_, _)
+                | TyKind::Primitive(_) => None,
                 TyKind::Forall(_, id, _) => Some(id),
             },
         }

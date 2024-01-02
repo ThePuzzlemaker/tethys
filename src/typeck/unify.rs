@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use id_arena::Id;
 
-use crate::ctxt::GlobalCtxt;
+use crate::{ast::PrimTy, ctxt::GlobalCtxt};
 
 use super::{
     ast::{CoreAstId, DeBruijnLvl, MetaEntry, MetaVar, Ty, TyKind},
@@ -130,6 +130,12 @@ fn rename(
             TyKind::Enum(x, rename_spine(gcx, m, pren, spine)?),
             t.span,
         ),
+        Primitive(prim) => Ty::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            TyKind::Primitive(prim),
+            t.span,
+        ),
     })
 }
 
@@ -206,6 +212,7 @@ pub fn unify(gcx: &GlobalCtxt, l: DeBruijnLvl, t: Id<VTy>, u: Id<VTy>) -> Result
         (Enum(x1, sp1), Enum(x2, sp2)) if x1 == x2 => {
             unify_spine(gcx, l, sp1, sp2)?;
         }
+        (Primitive(p1), Primitive(p2)) if p1 == p2 => {}
         _ => {
             return Err(UnifyError::RigidMismatch);
         }

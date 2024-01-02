@@ -3,7 +3,11 @@ use std::cell::RefCell;
 use calypso_base::symbol::Ident;
 use id_arena::{Arena, Id};
 
-use crate::{ast::AstId, ctxt::GlobalCtxt, parse::Span};
+use crate::{
+    ast::{AstId, PrimTy},
+    ctxt::GlobalCtxt,
+    parse::Span,
+};
 
 use super::ast::{CoreAstId, DeBruijnIdx, DeBruijnLvl, MetaEntry, MetaVar, Ty, TyKind};
 
@@ -48,6 +52,7 @@ pub enum VTyKind {
     Forall(CoreAstId, Ident, Closure),
     Free(AstId),
     Enum(AstId, VSpine),
+    Primitive(PrimTy),
 }
 
 pub fn apply_ty_closure(gcx: &GlobalCtxt, Closure(mut env, t): Closure, u: Id<VTy>) -> Id<VTy> {
@@ -90,6 +95,7 @@ pub fn eval_ty(gcx: &GlobalCtxt, env: Env, ty: Id<Ty>) -> Id<VTy> {
             VTyKind::Enum(id, eval_spine(gcx, env, spine)),
             ty.span,
         ),
+        TyKind::Primitive(prim) => VTy::new(gcx, ty.id, VTyKind::Primitive(prim), ty.span),
     }
 }
 
@@ -166,6 +172,12 @@ pub fn quote_ty(gcx: &GlobalCtxt, l: DeBruijnLvl, t: Id<VTy>) -> Id<Ty> {
             gcx,
             gcx.arenas.core.next_id(),
             TyKind::Enum(id, quote_ty_spine(gcx, l, spine)),
+            t.span,
+        ),
+        VTyKind::Primitive(ty) => Ty::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            TyKind::Primitive(ty),
             t.span,
         ),
     }

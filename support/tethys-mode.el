@@ -5,10 +5,10 @@
 ;;; Code:
 
 (defvar tethys-builtins
-  '())
+  '("true" "false"))
 
 (defvar tethys-keywords
-  '("def" "forall" "let" "in" "rec" "λ" "type" "enum"))
+  '("def" "forall" "let" "in" "rec" "λ" "type" "enum" "if" "then" "else"))
 
 (defvar tethys-tab-width nil
   "Tab width for `tethys-mode'.")

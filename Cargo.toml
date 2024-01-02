@@ -18,7 +18,7 @@ stable-vec = "0.4.0"
 internment = "0.7.0"
 id-arena = "2.2.1"
 im = "15.1.0"
-chumsky = "=1.0.0-alpha.2"
+chumsky = { git = "https://github.com/zesterer/chumsky.git", features = ["pratt", "label"] }
 
 [dependencies.calypso_base]
 git = "https://github.com/calypso-lang/calypso.git"

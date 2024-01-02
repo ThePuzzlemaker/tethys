@@ -89,8 +89,40 @@ pub enum ExprKind {
     Lambda(Ident, Id<Expr>),
     Let(Ident, Recursive, Option<Id<Ty>>, Id<Expr>, Id<Expr>),
     Number(i64),
+    BinaryOp {
+        left: Id<Expr>,
+        kind: BinOpKind,
+        right: Id<Expr>,
+    },
+    UnaryMinus(Id<Expr>),
+    UnaryNot(Id<Expr>),
+    Boolean(bool),
+    If(Id<Expr>, Id<Expr>, Id<Expr>),
     /// A placeholder for an expression that was not syntactically well-formed.
     Err,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BinOpKind {
+    Power,
+    Multiply,
+    Divide,
+    Modulo,
+    Add,
+    Subtract,
+    BitShiftLeft,
+    BitShiftRight,
+    BitAnd,
+    BitXor,
+    BitOr,
+    Equal,
+    NotEqual,
+    LessThan,
+    GreaterThan,
+    LessEqual,
+    GreaterEqual,
+    LogicalAnd,
+    LogicalOr,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -192,6 +224,7 @@ impl Res {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PrimTy {
     Integer,
+    Boolean,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -201,6 +234,7 @@ pub enum PrimFunc {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DefnKind {
+    Primitive,
     Value,
     TyAlias,
     Enum,
@@ -230,9 +264,15 @@ impl Node {
         match self {
             Self::Item(id) => Some(gcx.arenas.ast.item(id).ident),
             Self::Expr(id) => match gcx.arenas.ast.expr(id).kind {
-                ExprKind::Unit | ExprKind::Apply(_, _) | ExprKind::Err | ExprKind::Number(_) => {
-                    None
-                }
+                ExprKind::Unit
+                | ExprKind::Apply(_, _)
+                | ExprKind::Err
+                | ExprKind::Number(_)
+                | ExprKind::BinaryOp { .. }
+                | ExprKind::UnaryMinus(_)
+                | ExprKind::UnaryNot(_)
+                | ExprKind::Boolean(_)
+                | ExprKind::If(..) => None,
                 ExprKind::Name(ident)
                 | ExprKind::Lambda(ident, _)
                 | ExprKind::Let(ident, _, _, _, _) => Some(ident),

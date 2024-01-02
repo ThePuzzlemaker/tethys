@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use crate::{
     ast::{
         AstArenas, AstId, DefnKind, Expr, ExprKind, Item, ItemKind, Node, PrimFunc, PrimTy,
-        Recursive, Res, Ty, TyKind,
+        Recursive, Res, Ty, TyKind, DUMMY_AST_ID,
     },
     ctxt::GlobalCtxt,
     diag::Diagnostic,
@@ -86,6 +86,14 @@ pub fn resolve_code_unit(gcx: &GlobalCtxt, items: &[Id<Item>]) -> TysResult<()> 
         expr_stack: vec![],
         gen_ty_stack: vec![],
     };
+    rcx.type_ns.insert(
+        Symbol::intern_static("Integer"),
+        (DUMMY_AST_ID, DefnKind::Primitive),
+    );
+    rcx.type_ns.insert(
+        Symbol::intern_static("Boolean"),
+        (DUMMY_AST_ID, DefnKind::Primitive),
+    );
     rcx.collect(items)?;
     rcx.lower_code_unit(items)?;
     Ok(())
@@ -117,13 +125,6 @@ impl<'gcx> ResolutionCtxt<'gcx> {
         duplicate: AstId,
         dup_kind: DefnKind,
     ) {
-        let ident_span = self
-            .arena
-            .get_node_by_id(duplicate)
-            .expect("defn_id in nodes")
-            .ident(self.gcx)
-            .unwrap()
-            .span;
         let ident_span = if let DefnKind::EnumConstructor(branch) = dup_kind {
             let Node::Item(i) = self.arena.get_node_by_id(duplicate).unwrap() else {
                 unreachable!()
@@ -140,8 +141,17 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                 unreachable!()
             };
             generics.get(ix).unwrap().span
+        } else if let DefnKind::Primitive = dup_kind {
+            // Primitives have a dummy AST ID which will fail the
+            // expect below, so we special case them here.
+            (u32::MAX..u32::MAX).into()
         } else {
-            ident_span
+            self.arena
+                .get_node_by_id(duplicate)
+                .expect("defn_id in nodes")
+                .ident(self.gcx)
+                .unwrap()
+                .span
         };
 
         let span: Span = ident_span.into();
@@ -173,7 +183,7 @@ impl<'gcx> ResolutionCtxt<'gcx> {
             )
             .with_note(match (kind, dup_kind) {
                 (DefnKind::Value, _) => "top-level `def`initions must have unique names",
-                (DefnKind::TyAlias, DefnKind::TyAlias) => "`type` aliases must have unique names",
+                (DefnKind::TyAlias, _) => "`type` aliases must have unique names",
                 (DefnKind::EnumConstructor(_), _) => "`enum` constructors must have unique names",
                 (DefnKind::Enum, _) => "`enum`s must have unique names",
                 (DefnKind::EnumRecursor, _) => {
@@ -359,10 +369,12 @@ impl<'gcx> ResolutionCtxt<'gcx> {
             .find(|(_, _, sym)| *sym == var.symbol)
         {
             Res::Generic(*id, *ix)
-        } else if let Some((defn, defn_kind)) = self.type_ns.get(&var) {
-            Res::Defn(*defn_kind, *defn)
         } else if var.as_str() == "Integer" {
             Res::PrimTy(PrimTy::Integer)
+        } else if var.as_str() == "Boolean" {
+            Res::PrimTy(PrimTy::Boolean)
+        } else if let Some((defn, defn_kind)) = self.type_ns.get(&var) {
+            Res::Defn(*defn_kind, *defn)
         } else if var.as_str() == "_" || var.as_str() == "'_" {
             Res::Err
         } else {
@@ -479,6 +491,19 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                 self.expr_stack.pop();
             }
             ExprKind::Err => (),
+            ExprKind::BinaryOp { left, right, .. } => {
+                self.lower_expr(left)?;
+                self.lower_expr(right)?;
+            }
+            ExprKind::UnaryMinus(expr) | ExprKind::UnaryNot(expr) => {
+                self.lower_expr(expr)?;
+            }
+            ExprKind::Boolean(_) => (),
+            ExprKind::If(cond, then, then_else) => {
+                self.lower_expr(cond)?;
+                self.lower_expr(then)?;
+                self.lower_expr(then_else)?;
+            }
             _ => todo!(),
         };
         Ok(())

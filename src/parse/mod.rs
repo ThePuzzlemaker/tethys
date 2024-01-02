@@ -5,9 +5,10 @@ use chumsky::{
     error::{Error, RichReason},
     extra::Full,
     input::{BoxedStream, Stream},
-    input::{Input, SpannedInput},
+    input::{Input, MapExtra, SpannedInput},
+    pratt::{infix, left, prefix, right},
     prelude::*,
-    MaybeRef,
+    util::MaybeRef,
 };
 use id_arena::Id;
 use logos::{Lexer, Logos};
@@ -17,13 +18,13 @@ use calypso_base::{
     symbol::{special::EMPTY, Ident, Symbol},
 };
 
-use crate::ast::{Expr, ExprKind, Item, ItemKind, Recursive, Ty, TyKind};
+use crate::ast::{BinOpKind, Expr, ExprKind, Item, ItemKind, Recursive, Ty, TyKind};
 
 use crate::ctxt::GlobalCtxt;
 
-pub type SyntaxError<'a> = Rich<'a, Token, Span>;
-
-pub type TysInput<'a> = SpannedInput<Token, Span, BoxedStream<'a, (Token, Span)>>;
+pub type SyntaxError<'src> = Rich<'src, Token, Span>;
+pub type TysInput<'src> = SpannedInput<Token, Span, BoxedStream<'src, (Token, Span)>>;
+pub type Extra<'src> = Full<SyntaxError<'src>, &'src GlobalCtxt, ()>;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Deref)]
 #[repr(transparent)]
@@ -91,6 +92,16 @@ pub enum Token {
     Type,
     #[token("enum")]
     Enum,
+    #[token("true")]
+    True,
+    #[token("false")]
+    False,
+    #[token("if")]
+    If,
+    #[token("then")]
+    Then,
+    #[token("else")]
+    Else,
 
     #[regex("\\\\|λ")]
     Lambda,
@@ -114,6 +125,45 @@ pub enum Token {
     RBracket,
     #[token(",")]
     Comma,
+
+    #[token("**")]
+    StarStar,
+    #[token("*")]
+    Star,
+    #[token("/")]
+    Slash,
+    #[token("%")]
+    Percent,
+    #[token("+")]
+    Plus,
+    #[token("-")]
+    Minus,
+    #[token("<<")]
+    LtLt,
+    #[token(">>")]
+    GtGt,
+    #[token("&")]
+    And,
+    #[token("^")]
+    Caret,
+    #[token("==")]
+    EqEq,
+    #[token("!=")]
+    BangEq,
+    #[token("<")]
+    Lt,
+    #[token(">")]
+    Gt,
+    #[token("<=")]
+    LtEq,
+    #[token(">=")]
+    GtEq,
+    #[token("&&")]
+    AndAnd,
+    #[token("||")]
+    PipePipe,
+    #[token("!")]
+    Bang,
 
     #[regex("-?[0-9]+", |lex| parse_number(lex, 10))]
     #[regex("0b[01]+", |lex| parse_number(lex, 2))]
@@ -141,6 +191,39 @@ fn parse_number(lex: &mut Lexer<Token>, radix: u32) -> Result<i64, Token> {
     i64::from_str_radix(lex.slice(), radix).map_err(|_| Token::Error)
 }
 
+fn binop(lhs: Id<Expr>, op: Token, rhs: Id<Expr>, span: Span, gcx: &GlobalCtxt) -> Id<Expr> {
+    Expr::new(
+        gcx,
+        ExprKind::BinaryOp {
+            left: lhs,
+            kind: match op {
+                Token::StarStar => BinOpKind::Power,
+                Token::Star => BinOpKind::Multiply,
+                Token::Slash => BinOpKind::Divide,
+                Token::Percent => BinOpKind::Modulo,
+                Token::Plus => BinOpKind::Add,
+                Token::Minus => BinOpKind::Subtract,
+                Token::LtLt => BinOpKind::BitShiftLeft,
+                Token::GtGt => BinOpKind::BitShiftRight,
+                Token::And => BinOpKind::BitAnd,
+                Token::Caret => BinOpKind::BitXor,
+                Token::Pipe => BinOpKind::BitOr,
+                Token::EqEq => BinOpKind::Equal,
+                Token::BangEq => BinOpKind::NotEqual,
+                Token::Lt => BinOpKind::LessThan,
+                Token::Gt => BinOpKind::GreaterThan,
+                Token::LtEq => BinOpKind::LessEqual,
+                Token::GtEq => BinOpKind::GreaterEqual,
+                Token::AndAnd => BinOpKind::LogicalAnd,
+                Token::PipePipe => BinOpKind::LogicalOr,
+                _ => unreachable!(),
+            },
+            right: rhs,
+        },
+        span,
+    )
+}
+
 impl Token {
     pub fn description(&self) -> &'static str {
         match self {
@@ -150,6 +233,11 @@ impl Token {
             Token::In => "`in`",
             Token::Type => "`type`",
             Token::Enum => "`enum`",
+            Token::True => "`true`",
+            Token::False => "`false`",
+            Token::If => "`if`",
+            Token::Then => "`then`",
+            Token::Else => "`else`",
             Token::Lambda => "`\\` or `λ`",
             Token::Dot => "`.`",
             Token::LParen => "`(`",
@@ -161,6 +249,25 @@ impl Token {
             Token::Eq => "`=`",
             Token::Arrow => "`->`",
             Token::Pipe => "`|`",
+            Token::StarStar => "`**`",
+            Token::Star => "`*`",
+            Token::Slash => "`/`",
+            Token::Percent => "`%`",
+            Token::Minus => "`-`",
+            Token::LtLt => "`<<`",
+            Token::GtGt => "`>>`",
+            Token::And => "`&`",
+            Token::Caret => "`^`",
+            Token::EqEq => "`==`",
+            Token::BangEq => "`!=`",
+            Token::Lt => "`<`",
+            Token::Gt => "`>`",
+            Token::LtEq => "`<=`",
+            Token::GtEq => "`>=`",
+            Token::AndAnd => "`&&`",
+            Token::PipePipe => "`||`",
+            Token::Plus => "`+`",
+            Token::Bang => "`!`",
             Token::Ident(_) => "ident",
             Token::TyVar(_) => "type variable",
             Token::Number(_) => "number",
@@ -169,9 +276,9 @@ impl Token {
     }
 }
 
-pub fn parser(
-    gcx: &GlobalCtxt,
-) -> impl Parser<'_, TysInput<'_>, Vec<Id<Item>>, Full<SyntaxError<'_>, (), ()>> + Clone + '_ {
+#[allow(clippy::explicit_auto_deref)]
+pub fn parser<'src>() -> impl Parser<'src, TysInput<'src>, Vec<Id<Item>>, Extra<'src>> + Clone + 'src
+{
     let ident = any().try_map(|tok, span: Span| {
         if let Token::Ident(s) = tok {
             Ok(Ident {
@@ -214,8 +321,9 @@ pub fn parser(
         }
     });
 
-    let ty = recursive(|ty| {
-        let primary = choice((
+    let ty =
+        recursive(|ty| {
+            let primary = choice((
             ident
                 .then_ignore(just(Token::LBracket))
                 .then(
@@ -225,101 +333,259 @@ pub fn parser(
                         .map(im::Vector::from),
                 )
                 .then_ignore(just(Token::RBracket))
-                .map_with_span(|(ident, tys), span: Span| {
-                    Ty::new(gcx, TyKind::Data(ident, tys), span)
+                .map_with(|(ident, tys), extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                    let span = extra.span();
+                    Ty::new(*extra.state(), TyKind::Data(ident, tys), span)
                 }),
-            ident.map_with_span(|ident, span| Ty::new(gcx, TyKind::Name(ident), span)),
-            just([Token::LParen, Token::RParen])
-                .map_with_span(|_, span| Ty::new(gcx, TyKind::Unit, span)),
+            ident.map_with(|ident, extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                let span = extra.span();
+                Ty::new(*extra.state(), TyKind::Name(ident), span)
+            }),
+            just([Token::LParen, Token::RParen]).map_with(
+                |_, extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                    let span = extra.span();
+                    Ty::new(*extra.state(), TyKind::Unit, span)
+                },
+            ),
             just(Token::LParen)
-                .map_with_span(|_, sp: Span| sp)
+                .map_with(|_, extra| extra.span())
                 .then(ty.clone())
-                .then(just(Token::RParen).map_with_span(|_, sp: Span| sp))
-                .map(|((lo, x), hi)| {
-                    Ty::new(gcx, gcx.arenas.ast.ty(x).kind, Span(lo.with_hi(hi.hi())))
-                }),
-            tyvar.map_with_span(|ident, span| Ty::new(gcx, TyKind::Name(ident), span)),
-        ));
+                .then(just(Token::RParen).map_with(|_, extra| extra.span()))
+                .map_with(
+                    |((lo, x), hi): ((Span, _), Span),
+                     extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                        let gcx = *extra.state();
+                        Ty::new(gcx, gcx.arenas.ast.ty(x).kind, Span(lo.with_hi(hi.hi())))
+                    },
+                ),
+            tyvar.map_with(
+                |ident, extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                    let span = extra.span();
+                    Ty::new(*extra.state(), TyKind::Name(ident), span)
+                },
+            ),
+        ))
+        .boxed();
 
-        let arrow = primary.clone().foldl(
-            just(Token::Arrow).ignore_then(ty.clone()).repeated(),
-            |lhs, rhs| {
-                let sp = gcx
-                    .arenas
-                    .ast
-                    .ty(lhs)
-                    .span
-                    .with_hi(gcx.arenas.ast.ty(rhs).span.hi());
-                Ty::new(gcx, TyKind::Arrow(lhs, rhs), sp.into())
-            },
-        );
+            let arrow = primary
+                .clone()
+                .foldl_with(
+                    just(Token::Arrow).ignore_then(ty.clone()).repeated(),
+                    |lhs, rhs, extra| {
+                        let gcx: &mut &GlobalCtxt = extra.state();
+                        let sp = gcx
+                            .arenas
+                            .ast
+                            .ty(lhs)
+                            .span
+                            .with_hi(gcx.arenas.ast.ty(rhs).span.hi());
+                        Ty::new(gcx, TyKind::Arrow(lhs, rhs), sp.into())
+                    },
+                )
+                .boxed();
 
-        let forall = just(Token::Forall)
-            .map_with_span(|_, sp: Span| sp)
-            .then(tyvar.repeated().collect::<Vec<_>>())
-            .then_ignore(just(Token::Dot))
-            .then(ty.clone())
-            .map(|((sp, vars), ty)| {
-                vars.into_iter()
-                    .rfold((sp, ty), |(sp, ty), var| {
-                        let sp = sp.with_hi(gcx.arenas.ast.ty(ty).span.hi()).into();
-                        (sp, Ty::new(gcx, TyKind::Forall(var, ty), sp))
-                    })
-                    .1
-            });
+            let forall = just(Token::Forall)
+                .map_with(|_, extra| extra.span())
+                .then(tyvar.repeated().collect::<Vec<_>>())
+                .then_ignore(just(Token::Dot))
+                .then(ty.clone())
+                .map_with(|((sp, vars), ty), extra| {
+                    let gcx: &mut &GlobalCtxt = extra.state();
+                    vars.into_iter()
+                        .rfold((sp, ty), |(sp, ty): (Span, _), var| {
+                            let sp = sp.with_hi(gcx.arenas.ast.ty(ty).span.hi()).into();
+                            (sp, Ty::new(gcx, TyKind::Forall(var, ty), sp))
+                        })
+                        .1
+                });
 
-        forall.or(arrow)
-    });
+            forall.or(arrow)
+        });
 
     let expr = recursive(|expr| {
+        // 150
         let primary = choice((
-            ident.map_with_span(|ident, span| Expr::new(gcx, ExprKind::Name(ident), span)),
+            just(Token::True).map_with(|_, extra| {
+                Expr::new(*extra.state(), ExprKind::Boolean(true), extra.span())
+            }),
+            just(Token::False).map_with(|_, extra| {
+                Expr::new(*extra.state(), ExprKind::Boolean(false), extra.span())
+            }),
+            ident.map_with(|ident, extra| {
+                Expr::new(*extra.state(), ExprKind::Name(ident), extra.span())
+            }),
             just([Token::LParen, Token::RParen])
-                .map_with_span(|_, span| Expr::new(gcx, ExprKind::Unit, span)),
-            number.map_with_span(|num, span| Expr::new(gcx, ExprKind::Number(num), span)),
+                .map_with(|_, extra| Expr::new(*extra.state(), ExprKind::Unit, extra.span())),
+            number.map_with(|num, extra| {
+                Expr::new(*extra.state(), ExprKind::Number(num), extra.span())
+            }),
             just(Token::LParen)
-                .map_with_span(|_, sp: Span| sp)
+                .map_with(|_, extra| extra.span())
                 .then(expr.clone())
-                .then(just(Token::RParen).map_with_span(|_, sp: Span| sp))
-                .map(|((lo, x), hi)| {
+                .then(just(Token::RParen).map_with(|_, extra| -> Span { extra.span() }))
+                .map_with(|((lo, x), hi): ((Span, _), _), extra| {
+                    let gcx: &mut &GlobalCtxt = extra.state();
                     Expr::new(gcx, gcx.arenas.ast.expr(x).kind, Span(lo.with_hi(hi.hi())))
                 }),
         ));
 
-        let appl = primary.clone().foldl(primary.repeated(), |lhs, rhs| {
-            let sp = gcx
-                .arenas
-                .ast
-                .expr(lhs)
-                .span
-                .with_hi(gcx.arenas.ast.expr(rhs).span.hi());
-            Expr::new(gcx, ExprKind::Apply(lhs, rhs), sp.into())
-        });
+        // 140
+        let appl = primary.clone().foldl_with(
+            primary.repeated(),
+            |lhs, rhs, extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                let gcx: &GlobalCtxt = *extra.state();
+                let sp = gcx
+                    .arenas
+                    .ast
+                    .expr(lhs)
+                    .span
+                    .with_hi(gcx.arenas.ast.expr(rhs).span.hi());
+                Expr::new(gcx, ExprKind::Apply(lhs, rhs), sp.into())
+            },
+        );
 
+        let pratt = appl.clone().pratt((
+            infix(
+                right(130),
+                just(Token::StarStar),
+                |lhs, op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    binop(lhs, op, rhs, extra.span(), *extra.state())
+                },
+            ),
+            prefix(
+                120,
+                one_of([Token::Minus, Token::Bang]),
+                |op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    let span = extra.span();
+                    Expr::new(
+                        *extra.state(),
+                        match op {
+                            Token::Minus => ExprKind::UnaryMinus(rhs),
+                            Token::Bang => ExprKind::UnaryNot(rhs),
+                            _ => unreachable!(),
+                        },
+                        span,
+                    )
+                },
+            ),
+            infix(
+                left(110),
+                one_of([Token::Star, Token::Slash, Token::Percent]),
+                |lhs, op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    binop(lhs, op, rhs, extra.span(), *extra.state())
+                },
+            ),
+            infix(
+                left(100),
+                one_of([Token::Plus, Token::Minus]),
+                |lhs, op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    binop(lhs, op, rhs, extra.span(), *extra.state())
+                },
+            ),
+            infix(
+                left(90),
+                one_of([Token::LtLt, Token::GtGt]),
+                |lhs, op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    binop(lhs, op, rhs, extra.span(), *extra.state())
+                },
+            ),
+            infix(
+                left(80),
+                just(Token::And),
+                |lhs, op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    binop(lhs, op, rhs, extra.span(), *extra.state())
+                },
+            ),
+            infix(
+                left(70),
+                just(Token::Caret),
+                |lhs, op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    binop(lhs, op, rhs, extra.span(), *extra.state())
+                },
+            ),
+            infix(
+                left(60),
+                just(Token::Pipe),
+                |lhs, op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    binop(lhs, op, rhs, extra.span(), *extra.state())
+                },
+            ),
+            infix(
+                left(50),
+                one_of([
+                    Token::EqEq,
+                    Token::BangEq,
+                    Token::Lt,
+                    Token::LtEq,
+                    Token::Gt,
+                    Token::GtEq,
+                ]),
+                |lhs, op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    binop(lhs, op, rhs, extra.span(), *extra.state())
+                },
+            ),
+            infix(
+                left(40),
+                just(Token::AndAnd),
+                |lhs, op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    binop(lhs, op, rhs, extra.span(), *extra.state())
+                },
+            ),
+            infix(
+                left(30),
+                just(Token::PipePipe),
+                |lhs, op, rhs, extra: &mut MapExtra<'src, '_, TysInput<'src>, Extra<'src>>| {
+                    binop(lhs, op, rhs, extra.span(), *extra.state())
+                },
+            ),
+        ));
+
+        // 20
         let lambda = just(Token::Lambda)
-            .map_with_span(|_, span: Span| span)
+            .map_with(|_, extra| extra.span())
             .then(ident.repeated().collect::<Vec<_>>())
             .then_ignore(just(Token::Dot))
             .then(expr.clone())
-            .map(|((sp, vars), expr)| {
-                vars.into_iter()
-                    .rfold((sp, expr), |(sp, expr), var| {
-                        let sp = sp.with_hi(gcx.arenas.ast.expr(expr).span.hi()).into();
-                        (sp, Expr::new(gcx, ExprKind::Lambda(var, expr), sp))
-                    })
-                    .1
-            })
-            .or(appl.clone());
+            .map_with(
+                |((sp, vars), expr), extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                    let gcx: &mut &GlobalCtxt = extra.state();
+                    vars.into_iter()
+                        .rfold((sp, expr), |(sp, expr): (Span, _), var| {
+                            let sp = sp.with_hi(gcx.arenas.ast.expr(expr).span.hi()).into();
+                            (sp, Expr::new(gcx, ExprKind::Lambda(var, expr), sp))
+                        })
+                        .1
+                },
+            )
+            .or(pratt.clone());
 
+        // 15
+        let r#if = just(Token::If)
+            .ignore_then(lambda.clone())
+            .then_ignore(just(Token::Then))
+            .then(expr.clone())
+            .then_ignore(just(Token::Else))
+            .then(expr.clone())
+            .map_with(|((cond, then), else_then), extra| {
+                Expr::new(
+                    *extra.state(),
+                    ExprKind::If(cond, then, else_then),
+                    extra.span(),
+                )
+            })
+            .or(lambda.clone());
+
+        // 10
         just(Token::Let)
-            .map_with_span(|_, span: Span| span)
+            .map_with(|_, extra| -> Span { extra.span() })
             .then(ident)
             .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
             .then_ignore(just(Token::Eq))
             .then(expr.clone())
             .then_ignore(just(Token::In))
             .then(expr)
-            .map(|((((sp, ident), ty), expr), inn)| {
+            .map_with(|((((sp, ident), ty), expr), inn), extra| {
+                let gcx: &mut &GlobalCtxt = extra.state();
                 let sp = sp.with_hi(gcx.arenas.ast.expr(inn).span.hi()).into();
                 Expr::new(
                     gcx,
@@ -328,33 +594,44 @@ pub fn parser(
                     sp,
                 )
             })
-            .or(lambda)
+            .or(r#if)
     });
 
     let def = just(Token::Def)
-        .map_with_span(|_, span: Span| span)
+        .map_with(
+            |_, extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| -> Span { extra.span() },
+        )
         .then(ident)
         .then_ignore(just(Token::Colon))
         .then(ty.clone())
         .then_ignore(just(Token::Eq))
         .then(expr)
-        .map(|(((sp, name), ty), expr)| {
-            let sp = sp.with_hi(gcx.arenas.ast.expr(expr).span.hi()).into();
-            Item::new(gcx, name, ItemKind::Value(ty, expr), sp)
-        });
+        .map_with(
+            |(((sp, name), ty), expr), extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                let gcx: &mut &GlobalCtxt = extra.state();
+                let sp = sp.with_hi(gcx.arenas.ast.expr(expr).span.hi()).into();
+                Item::new(gcx, name, ItemKind::Value(ty, expr), sp)
+            },
+        );
 
     let ty_alias = just(Token::Type)
-        .map_with_span(|_, span: Span| span)
+        .map_with(|_, extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| extra.span())
         .then(ident)
         .then_ignore(just(Token::Eq))
         .then(ty.clone())
-        .map(|((sp, name), ty)| {
-            let sp = sp.with_hi(gcx.arenas.ast.ty(ty).span.hi()).into();
-            Item::new(gcx, name, ItemKind::TyAlias(ty), sp)
-        });
+        .map_with(
+            |((sp, name), ty): ((Span, _), _),
+             extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                let gcx: &mut &GlobalCtxt = extra.state();
+                let sp = sp.with_hi(gcx.arenas.ast.ty(ty).span.hi()).into();
+                Item::new(gcx, name, ItemKind::TyAlias(ty), sp)
+            },
+        );
 
     let r#enum = just(Token::Enum)
-        .map_with_span(|_, span: Span| span)
+        .map_with(
+            |_, extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| -> Span { extra.span() },
+        )
         .then(ident)
         .then(
             just(Token::LBracket)
@@ -366,7 +643,9 @@ pub fn parser(
                 )
                 .then_ignore(just(Token::RBracket))
                 .or_not()
-                .map_with_span(|x, span: Span| (x.unwrap_or_default(), span)),
+                .map_with(|x, extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                    (x.unwrap_or_default(), extra.span())
+                }),
         )
         .then_ignore(just(Token::Eq))
         .then(
@@ -375,8 +654,11 @@ pub fn parser(
                 .separated_by(just(Token::Pipe))
                 .collect::<Vec<_>>()),
         )
-        .map_with_span(
-            |(((sp, name), (generics, generics_list_span)), tys), sp2: Span| {
+        .map_with(
+            |(((sp, name), (generics, generics_list_span)), tys),
+             extra: &mut MapExtra<'_, '_, TysInput<'_>, Extra<'_>>| {
+                let gcx: &GlobalCtxt = *extra.state();
+                let sp2: Span = extra.span();
                 let sp = sp.with_hi(sp2.hi()).into();
                 Item::new(
                     gcx,
@@ -399,7 +681,7 @@ pub fn parser(
 }
 
 // TODO(@ThePuzzlemaker: diag): actually use DRCX for this
-pub fn run<'a>(src: &'a str, gcx: &'a GlobalCtxt) -> Vec<Id<Item>> {
+pub fn run<'a>(src: &'a str, mut gcx: &'a GlobalCtxt) -> Vec<Id<Item>> {
     let lex = Token::lexer(src).spanned().map(|(x, sp)| {
         // TODO: make this more efficient
         let lo = src
@@ -417,7 +699,9 @@ pub fn run<'a>(src: &'a str, gcx: &'a GlobalCtxt) -> Vec<Id<Item>> {
     let srclen = src.len().try_into().unwrap();
     let stream = Stream::from_iter(lex).boxed();
     let stream = stream.spanned(Span(span::Span::new(srclen, srclen)));
-    let (decls, parse_errs) = parser(gcx).parse(stream).into_output_errors();
+    let (decls, parse_errs) = parser()
+        .parse_with_state(stream, &mut gcx)
+        .into_output_errors();
 
     parse_errs.into_iter().for_each(|e| {
         let mut report = Report::build(ReportKind::Error, (), e.span().lo() as usize);

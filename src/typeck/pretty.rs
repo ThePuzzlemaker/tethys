@@ -3,7 +3,13 @@ use id_arena::Id;
 use pretty::{DocAllocator, RcAllocator, RcDoc};
 
 use crate::{
-    ast::{ItemKind, Node},
+    ast::{
+        pretty::{
+            prec_binop, PREC_EXPR_APPL, PREC_EXPR_IF, PREC_EXPR_LAMBDA, PREC_EXPR_LET,
+            PREC_EXPR_PRIMARY, PREC_EXPR_UNARY,
+        },
+        BinOpKind, ItemKind, Node, PrimTy,
+    },
     ctxt::GlobalCtxt,
 };
 
@@ -158,13 +164,10 @@ pub fn pp_ty(
                 RcDoc::text(")")
             })
         }
+        TyKind::Primitive(PrimTy::Integer) => RcDoc::text("Integer"),
+        TyKind::Primitive(PrimTy::Boolean) => RcDoc::text("Boolean"),
     }
 }
-
-const PREC_EXPR_PRIMARY: usize = 4;
-const PREC_EXPR_APPL: usize = 3;
-const PREC_EXPR_LAMBDA: usize = 2;
-const PREC_EXPR_LET: usize = 1;
 
 pub fn pp_expr(
     prec: usize,
@@ -284,5 +287,90 @@ pub fn pp_expr(
         }
         ExprKind::Fix(_, _, _) => todo!(),
         ExprKind::Err(_) => RcDoc::text("<error>"),
+        ExprKind::Number(v) => RcDoc::text(v.to_string()),
+        ExprKind::Boolean(b) => RcDoc::text(b.to_string()),
+        ExprKind::BinaryOp { left, kind, right } => {
+            // TODO: precedence
+            let left = pp_expr(prec_binop(kind), gcx, l, e.clone(), left);
+            let right = pp_expr(prec_binop(kind), gcx, l, e, right);
+            maybe_paren(
+                prec,
+                prec_binop(kind),
+                left.append(RcDoc::space())
+                    .append(match kind {
+                        BinOpKind::LogicalOr => "||",
+                        BinOpKind::LogicalAnd => "&&",
+                        BinOpKind::BitOr => "|",
+                        BinOpKind::BitAnd => "&",
+                        BinOpKind::BitXor => "^",
+                        BinOpKind::Equal => "==",
+                        BinOpKind::NotEqual => "!=",
+                        BinOpKind::LessThan => "<",
+                        BinOpKind::GreaterThan => ">",
+                        BinOpKind::LessEqual => "<=",
+                        BinOpKind::GreaterEqual => ">=",
+                        BinOpKind::BitShiftLeft => "<<",
+                        BinOpKind::BitShiftRight => ">>",
+                        BinOpKind::Add => "+",
+                        BinOpKind::Subtract => "-",
+                        BinOpKind::Multiply => "*",
+                        BinOpKind::Divide => "/",
+                        BinOpKind::Modulo => "%",
+                        BinOpKind::Power => "**",
+                    })
+                    .append(RcDoc::space())
+                    .append(right),
+            )
+        }
+
+        ExprKind::If(cond, then, then_else) => {
+            let cond = pp_expr(PREC_EXPR_LAMBDA, gcx, l, e.clone(), cond);
+            let then = pp_expr(PREC_EXPR_LET, gcx, l, e.clone(), then);
+            let then_else = pp_expr(PREC_EXPR_LET, gcx, l, e, then_else);
+
+            maybe_paren(
+                prec,
+                PREC_EXPR_IF,
+                RcAllocator
+                    .text("if")
+                    .append(RcDoc::space())
+                    .append(cond)
+                    .append(RcDoc::softline())
+                    .append(
+                        RcAllocator
+                            .text("then")
+                            .append(RcDoc::space())
+                            .append(then)
+                            .into_doc(),
+                    )
+                    .align()
+                    .append(RcDoc::softline())
+                    .append(
+                        RcAllocator
+                            .text("else")
+                            .append(RcDoc::space())
+                            .append(then_else)
+                            .into_doc(),
+                    )
+                    .align()
+                    .into_doc(),
+            )
+        } // ExprKind::UnaryMinus(expr) => maybe_paren(
+          //     prec,
+          //     PREC_EXPR_UNARY,
+          //     RcAllocator
+          //         .text("-")
+          //         .append(pp_expr(PREC_EXPR_UNARY, gcx, l, e, expr))
+          //         .into_doc(),
+          // ),
+
+          // ExprKind::UnaryNot(expr) => maybe_paren(
+          //     prec,
+          //     PREC_EXPR_UNARY,
+          //     RcAllocator
+          //         .text("!")
+          //         .append(pp_expr(PREC_EXPR_UNARY, gcx, l, e, expr))
+          //         .into_doc(),
+          // ),
     }
 }
