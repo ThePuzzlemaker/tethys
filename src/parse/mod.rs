@@ -649,10 +649,12 @@ pub fn parser<'src>() -> impl Parser<'src, TysInput<'src>, Vec<Id<Item>>, Extra<
         )
         .then_ignore(just(Token::Eq))
         .then(
-            just(Token::Pipe).map(|_| vec![]).or(ident
-                .then(ty.clone().repeated().collect::<Vec<_>>())
-                .separated_by(just(Token::Pipe))
-                .collect::<Vec<_>>()),
+            just(Token::Pipe).or_not().ignore_then(
+                ident
+                    .then(ty.clone().repeated().collect::<Vec<_>>())
+                    .separated_by(just(Token::Pipe))
+                    .collect::<Vec<_>>(),
+            ),
         )
         .map_with(
             |(((sp, name), (generics, generics_list_span)), tys),
