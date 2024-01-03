@@ -15,7 +15,10 @@ use crate::{
     parse::Span,
 };
 
-use super::{norm::nf_ty_force, TypeckCtxt};
+use super::{
+    norm::{nf_ty_force, FlexTuple},
+    TypeckCtxt,
+};
 
 index_vec::define_index_type! {
     pub struct DeBruijnIdx = u32;
@@ -79,6 +82,8 @@ pub enum TyKind {
     InsertedMeta(MetaVar),
     Free(AstId),
     Enum(AstId, im::Vector<Id<Ty>>),
+    Tuple(im::Vector<Id<Ty>>),
+    TupleFlex(im::Vector<Id<Ty>>),
 }
 
 #[derive(Clone, Debug)]
@@ -130,6 +135,8 @@ pub enum ExprKind {
     Boolean(bool),
     Err(ExprDeferredError),
     If(Id<Expr>, Id<Expr>, Id<Expr>),
+    Tuple(im::Vector<Id<Expr>>),
+    TupleProj(Id<Expr>, u64),
 }
 
 #[derive(Clone, Debug)]
@@ -303,7 +310,9 @@ impl Node {
                 | ExprKind::Number(_)
                 | ExprKind::BinaryOp { .. }
                 | ExprKind::Boolean(_)
-                | ExprKind::If(..) => None,
+                | ExprKind::If(..)
+                | ExprKind::Tuple(..)
+                | ExprKind::TupleProj(..) => None,
                 ExprKind::Lam(_, id, _)
                 | ExprKind::Let(_, id, _, _, _)
                 | ExprKind::Fix(_, id, _)
@@ -317,7 +326,9 @@ impl Node {
                 | TyKind::InsertedMeta(_)
                 | TyKind::Free(_)
                 | TyKind::Enum(_, _)
-                | TyKind::Primitive(_) => None,
+                | TyKind::Primitive(_)
+                | TyKind::Tuple(_)
+                | TyKind::TupleFlex(_) => None,
                 TyKind::Forall(_, id, _) => Some(id),
             },
         }

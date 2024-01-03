@@ -60,7 +60,7 @@ pub enum ItemKind {
     ),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Expr {
     pub id: AstId,
     pub kind: ExprKind,
@@ -81,7 +81,7 @@ impl Expr {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     Unit,
     Name(Ident),
@@ -98,7 +98,11 @@ pub enum ExprKind {
     UnaryNot(Id<Expr>),
     Boolean(bool),
     If(Id<Expr>, Id<Expr>, Id<Expr>),
-    /// A placeholder for an expression that was not syntactically well-formed.
+    /// Tuples, excluding unit, which is [`ExprKind::Unit`].
+    Tuple(im::Vector<Id<Expr>>),
+    TupleProj(Id<Expr>, u64),
+    /// A placeholder for an expression that was not syntactically
+    /// well-formed.
     Err,
 }
 
@@ -149,13 +153,15 @@ impl Ty {
 
 #[derive(Clone, Debug)]
 pub enum TyKind {
-    /// N.B. This will eventually be generalized to tuples
     Unit,
     Name(Ident),
     Data(Ident, im::Vector<Id<Ty>>),
     Arrow(Id<Ty>, Id<Ty>),
     Forall(Ident, Id<Ty>),
-    /// A placeholder for a type that was not syntactically well-formed
+    /// Tuples, excluding 0-tuples which are [`TyKind::Unit`]
+    Tuple(im::Vector<Id<Ty>>),
+    /// A placeholder for a type that was not syntactically
+    /// well-formed
     Err,
 }
 
@@ -167,6 +173,7 @@ impl TyKind {
             TyKind::Arrow(..) => "arrow".into(),
             TyKind::Forall(..) => "forall".into(),
             TyKind::Data(..) => "type".into(),
+            TyKind::Tuple(..) => "tuple".into(),
             TyKind::Err => "invalid type".into(),
         }
     }
@@ -272,13 +279,15 @@ impl Node {
                 | ExprKind::UnaryMinus(_)
                 | ExprKind::UnaryNot(_)
                 | ExprKind::Boolean(_)
-                | ExprKind::If(..) => None,
+                | ExprKind::If(..)
+                | ExprKind::Tuple(_)
+                | ExprKind::TupleProj(..) => None,
                 ExprKind::Name(ident)
                 | ExprKind::Lambda(ident, _)
                 | ExprKind::Let(ident, _, _, _, _) => Some(ident),
             },
             Self::Ty(id) => match gcx.arenas.ast.ty(id).kind {
-                TyKind::Unit | TyKind::Arrow(_, _) | TyKind::Err => None,
+                TyKind::Unit | TyKind::Arrow(_, _) | TyKind::Err | TyKind::Tuple(_) => None,
                 TyKind::Name(ident) | TyKind::Forall(ident, _) | TyKind::Data(ident, _) => {
                     Some(ident)
                 }
@@ -343,7 +352,7 @@ impl AstArenas {
     }
 
     pub fn expr(&self, id: Id<Expr>) -> Expr {
-        self.expr.borrow()[id]
+        self.expr.borrow()[id].clone()
     }
 
     pub fn item(&self, id: Id<Item>) -> Item {

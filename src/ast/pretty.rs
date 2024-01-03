@@ -44,8 +44,7 @@ pub fn pp_ty(prec: usize, gcx: &GlobalCtxt, ty: Id<Ty>) -> RcDoc<'_> {
                 a.append(RcDoc::line())
                     .append("->")
                     .append(RcDoc::space())
-                    .append(b)
-                    .group(),
+                    .append(b),
             )
         }
         TyKind::Forall(x, a) => {
@@ -64,11 +63,52 @@ pub fn pp_ty(prec: usize, gcx: &GlobalCtxt, ty: Id<Ty>) -> RcDoc<'_> {
                     .into_doc(),
             )
         }
+        TyKind::Tuple(v) => {
+            let v_multi = v.iter().copied().map(|x| {
+                RcAllocator
+                    .nil()
+                    .append(pp_ty(PREC_TY_FORALL, gcx, x))
+                    .nest(2)
+                    .append(",")
+                    .append(RcDoc::line())
+            });
+            let v_flat = if v.len() > 1 {
+                RcAllocator
+                    .intersperse(
+                        v.iter()
+                            .copied()
+                            .map(|x| {
+                                RcAllocator
+                                    .nil()
+                                    .append(pp_ty(PREC_TY_FORALL, gcx, x))
+                                    .nest(2)
+                            })
+                            .collect::<Vec<_>>(),
+                        RcAllocator.text(",").append(" "),
+                    )
+                    .parens()
+            } else {
+                RcAllocator
+                    .nil()
+                    .append(pp_ty(PREC_TY_FORALL, gcx, v[0]).nest(2))
+                    .append(",")
+                    .parens()
+            };
+            RcAllocator
+                .text("(")
+                .append(RcDoc::line())
+                .append(RcAllocator.intersperse(v_multi, RcDoc::nil()).indent(4))
+                .append(")")
+                .flat_alt(v_flat)
+                .group()
+                .into_doc()
+        }
         TyKind::Err => RcDoc::text("<syntax error>"),
     }
 }
 
 pub const PREC_EXPR_PRIMARY: usize = 150;
+pub const PREC_EXPR_TUPLE_PROJ: usize = 145;
 pub const PREC_EXPR_APPL: usize = 140;
 pub const PREC_EXPR_UNARY: usize = 120;
 pub const PREC_EXPR_LAMBDA: usize = 20;
@@ -99,6 +139,54 @@ pub fn pp_expr(prec: usize, gcx: &GlobalCtxt, expr: Id<Expr>) -> RcDoc<'_> {
     match gcx.arenas.ast.expr(expr).kind {
         ExprKind::Unit => RcDoc::text("()"),
         ExprKind::Name(n) => RcDoc::text(n.as_str()),
+        ExprKind::TupleProj(expr, ix) => {
+            let expr = pp_expr(PREC_EXPR_TUPLE_PROJ, gcx, expr);
+            maybe_paren(
+                prec,
+                PREC_EXPR_TUPLE_PROJ,
+                expr.append(".").append(ix.to_string()),
+            )
+        }
+        ExprKind::Tuple(v) => {
+            let v_multi = v.iter().copied().map(|x| {
+                RcAllocator
+                    .nil()
+                    .append(pp_expr(PREC_EXPR_LET, gcx, x))
+                    .nest(2)
+                    .append(",")
+                    .append(RcDoc::line())
+            });
+            let v_flat = if v.len() > 1 {
+                RcAllocator
+                    .intersperse(
+                        v.iter()
+                            .copied()
+                            .map(|x| {
+                                RcAllocator
+                                    .nil()
+                                    .append(pp_expr(PREC_EXPR_LET, gcx, x))
+                                    .nest(2)
+                            })
+                            .collect::<Vec<_>>(),
+                        RcAllocator.text(",").append(" "),
+                    )
+                    .parens()
+            } else {
+                RcAllocator
+                    .nil()
+                    .append(pp_expr(PREC_EXPR_LET, gcx, v[0]).nest(2))
+                    .append(",")
+                    .parens()
+            };
+            RcAllocator
+                .text("(")
+                .append(RcDoc::line())
+                .append(RcAllocator.intersperse(v_multi, RcDoc::nil()).indent(4))
+                .append(")")
+                .flat_alt(v_flat)
+                .group()
+                .into_doc()
+        }
         ExprKind::Lambda(x, body) => {
             let body = pp_expr(PREC_EXPR_LET, gcx, body);
             maybe_paren(
@@ -212,9 +300,9 @@ pub fn pp_expr(prec: usize, gcx: &GlobalCtxt, expr: Id<Expr>) -> RcDoc<'_> {
                 Some(t) => RcAllocator
                     .text(":")
                     .append(RcDoc::space())
-                    .append(RcAllocator.nil().append(t).align())
+                    .append(RcAllocator.nil().append(t).align().group())
                     // TODO: add some kind of heuristic to make this a
-                    // line for more complex inner values
+                    // line for more complex inner values (flat_alt?)
                     .append(RcDoc::softline())
                     .append("=")
                     .append(RcDoc::space())
@@ -253,7 +341,7 @@ pub fn pp_item(gcx: &GlobalCtxt, item: Id<Item>) -> RcDoc<'_> {
             let t = RcAllocator
                 .text(":")
                 .append(RcDoc::space())
-                .append(RcAllocator.nil().append(t).align())
+                .append(RcAllocator.nil().append(t).align().group())
                 .append(RcDoc::line())
                 .append("=")
                 .append(RcDoc::space())

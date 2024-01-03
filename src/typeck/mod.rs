@@ -11,7 +11,7 @@ use crate::{
     parse::Span,
     typeck::{
         ast::{DeBruijnIdx, ExprDeferredError},
-        norm::quote_ty,
+        norm::{quote_ty, FlexTuple},
     },
 };
 
@@ -114,7 +114,17 @@ pub fn surf_ty_to_core(
     use surf::TyKind as ST;
     let t = gcx.arenas.ast.ty(t);
     Ok(match t.kind {
+        // TODO: make proper use of lower_ty and try_lower_ty so we
+        // don't recurse if we don't need to
         ST::Unit => lower_ty(gcx, t.id, |id| ast::Ty::new(gcx, id, CT::Unit, t.span)),
+        ST::Tuple(tys) => try_lower_ty(gcx, t.id, |cid| {
+            let tys = tys
+                .into_iter()
+                .map(|x| surf_ty_to_core(gcx, tcx.clone(), x))
+                .collect::<Result<im::Vector<_>, _>>()?;
+
+            Ok(ast::Ty::new(gcx, cid, CT::Tuple(tys), t.span))
+        })?,
         ST::Data(Ident { symbol, span }, spine) => {
             if symbol.as_str() == "_" {
                 let report = Report::build(ReportKind::Error, (), span.lo() as usize)
@@ -565,6 +575,164 @@ pub fn unify_check(
     unify::unify(gcx, tcx.lvl, vt, vu)
 }
 
+fn unify_error(
+    gcx: &GlobalCtxt,
+    tcx: TypeckCtxt,
+    inferred: Id<VTy>,
+    e: Id<ast::Expr>,
+    it: Id<VTy>,
+    type_expectation: TypeExpectation,
+    err: UnifyError,
+) -> Result<Id<ast::Expr>, ElabError> {
+    use ast::TyKind as CT;
+    let mut w = Vec::new();
+    let inferred = quote_ty(gcx, tcx.lvl, inferred);
+    let doc = crate::typeck::pretty::pp_ty(0, gcx, tcx.lvl, tcx.env.clone(), inferred);
+    doc.render(80, &mut w).unwrap();
+    let inferred_s = String::from_utf8(w).unwrap();
+
+    let mut w = Vec::new();
+    let expected = quote_ty(gcx, tcx.lvl, it);
+    let doc = crate::typeck::pretty::pp_ty(0, gcx, tcx.lvl, tcx.env.clone(), expected);
+    doc.render(80, &mut w).unwrap();
+    let expected_s = String::from_utf8(w).unwrap();
+
+    let span = gcx.arenas.core.expr(e).span;
+    let report = Report::build(ReportKind::Error, (), span.lo() as usize)
+        .with_message("mismatched types")
+        .with_label(
+            Label::new(span)
+                .with_color(Color::Red)
+                .with_message(format!("found type `{inferred_s}`"))
+                .with_order(0),
+        );
+
+    let mut report = match type_expectation {
+        TypeExpectation::Definition(span) => report.with_label(
+            Label::new(span)
+                .with_color(Color::Blue)
+                .with_message(format!("expected type `{expected_s}`"))
+                .with_order(1),
+        ),
+        TypeExpectation::FunctionApp(span, f_span) => report
+            .with_label(
+                Label::new(span)
+                    .with_color(Color::Blue)
+                    .with_message(format!(
+                        "this function expected argument type `{expected_s}`"
+                    ))
+                    .with_order(1),
+            )
+            .with_label(
+                Label::new(f_span)
+                    .with_color(Color::Green)
+                    .with_message("argument type defined here"),
+            ),
+        TypeExpectation::BinaryOp(span, op_type) => report
+            .with_label(
+                Label::new(span)
+                    .with_color(Color::Blue)
+                    .with_message(format!("this operation had type `{op_type}`"))
+                    .with_order(-1),
+            )
+            .with_config(Config::default().with_label_attach(LabelAttach::End)),
+        TypeExpectation::IfCondition(if_span) => report.with_label(
+            Label::new(if_span.with_hi(span.hi()).into())
+                .with_color(Color::Blue)
+                .with_message("expected type `Boolean` due to this `if`"),
+        ),
+        TypeExpectation::IfElse(span) => report
+            .with_label(
+                Label::new(span)
+                    .with_color(Color::Blue)
+                    .with_message(format!("expected type `{expected_s}`"))
+                    .with_order(1),
+            )
+            .with_note("`if` branches must have the same type"),
+        TypeExpectation::TupleProj(span, _) => report
+            .with_label(
+                Label::new(span)
+                    .with_color(Color::Blue)
+                    // TODO: defer this error
+                    .with_message(format!(
+                        "expected tuple `{expected_s}` due to this projection",
+                    ))
+                    .with_order(1),
+            )
+            .with_config(Config::default().with_label_attach(LabelAttach::End)),
+    };
+
+    match err {
+        UnifyError::Occurs => {
+            report.set_message("occurs check failed: cannot create recursive type")
+        }
+        UnifyError::Scope(id, _) => {
+            report.set_message("could not match types: type variable would escape scope");
+            report.set_help("try adding a type annotation with a `forall` quantifier");
+            report.add_label(
+                Label::new(
+                    gcx.arenas
+                        .core
+                        .get_node_by_id(id)
+                        .unwrap()
+                        .span(gcx)
+                        .with_hi(
+                            gcx.arenas
+                                .core
+                                .get_node_by_id(id)
+                                .unwrap()
+                                .ident(gcx)
+                                .unwrap()
+                                .span
+                                .hi(),
+                        )
+                        .into(),
+                )
+                .with_color(Color::Blue)
+                .with_message("type variable defined here was not in scope"),
+            );
+        }
+        UnifyError::SpineMismatch => {}
+        UnifyError::RigidMismatch => {}
+    }
+    let report = report.finish();
+    gcx.drcx.borrow_mut().report_syncd(report);
+
+    if let CT::Meta(mv, _) | CT::InsertedMeta(mv) = gcx.arenas.core.ty(inferred).kind {
+        let mv = mv.0.borrow();
+        let report = Report::build(
+            ReportKind::Custom("Help", Color::Blue),
+            (),
+            mv.1.span.lo() as usize,
+        )
+        .with_message(format!(
+            "{} was a type hole, generated from this expression",
+            mv.1.name.as_str()
+        ))
+        .with_label(Label::new(mv.1.span).with_color(Color::Blue))
+        .finish();
+        gcx.drcx.borrow_mut().report_syncd(report);
+    }
+
+    if let CT::Meta(mv, _) | CT::InsertedMeta(mv) = gcx.arenas.core.ty(expected).kind {
+        let mv = mv.0.borrow();
+        let report = Report::build(
+            ReportKind::Custom("Help", Color::Blue),
+            (),
+            mv.1.span.lo() as usize,
+        )
+        .with_message(format!(
+            "{} was a type hole, generated from this expression",
+            mv.1.name.as_str()
+        ))
+        .with_label(Label::new(mv.1.span).with_color(Color::Blue))
+        .finish();
+        gcx.drcx.borrow_mut().report_syncd(report);
+    }
+
+    return Ok(e);
+}
+
 pub fn check(
     gcx: &GlobalCtxt,
     tcx: TypeckCtxt,
@@ -573,7 +741,6 @@ pub fn check(
     type_expectation: TypeExpectation,
 ) -> Result<Id<ast::Expr>, ElabError> {
     use ast::ExprKind as CE;
-    use ast::TyKind as CT;
     use surf::ExprKind as SE;
     use VTyKind as VT;
     let it = force(gcx, it);
@@ -650,146 +817,65 @@ pub fn check(
 
             ast::Expr::new(gcx, cid, CE::Let(cid, i, t_e1, e1, e2), e.span)
         }
+
+        (SE::TupleProj(expr, ix), _) => {
+            let mvs = (0..=ix)
+                .map(|i| {
+                    if ix == i {
+                        it
+                    } else {
+                        eval_ty(
+                            gcx,
+                            tcx.env.clone(),
+                            fresh_meta(
+                                gcx,
+                                tcx.lvl,
+                                gcx.arenas.core.next_id(),
+                                Symbol::intern(&format!("?tuple_{i}")),
+                                e.span,
+                                Span((u32::MAX..u32::MAX).into()),
+                            ),
+                        )
+                    }
+                })
+                .collect::<im::Vector<_>>();
+            let vt_mvs = VTy::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                VTyKind::TupleFlex(Rc::new(RefCell::new(FlexTuple::Flex(mvs.clone())))),
+                Span((u32::MAX..u32::MAX).into()),
+            );
+
+            let (expr, vt_expr) = infer(gcx, tcx.clone(), expr)?;
+
+            // doing it this way gives better errors than simply using
+            // `check` above: working bottom-up rather than top-down
+            // generally works better for tuples, to avoid giving
+            // nasty `expected ((?tuple_0, Integer, ...), ...)` errors
+            if let Err(err) = unify_check(gcx, tcx.clone(), vt_mvs, vt_expr) {
+                unify_error(
+                    gcx,
+                    tcx,
+                    vt_expr,
+                    expr,
+                    vt_mvs,
+                    TypeExpectation::TupleProj(e.span, ix),
+                    err,
+                )?;
+            }
+
+            ast::Expr::new(
+                gcx,
+                gcx.arenas.core.lower_id(e.id),
+                CE::TupleProj(expr, ix),
+                e.span,
+            )
+        }
         (_, _) => {
             let (e, inferred) = infer_and_inst(gcx, tcx.clone(), ie)?;
 
             if let Err(err) = unify_check(gcx, tcx.clone(), it, inferred) {
-                let mut w = Vec::new();
-                let inferred = quote_ty(gcx, tcx.lvl, inferred);
-                let doc = crate::typeck::pretty::pp_ty(0, gcx, tcx.lvl, tcx.env.clone(), inferred);
-                doc.render(80, &mut w).unwrap();
-                let inferred_s = String::from_utf8(w).unwrap();
-
-                let mut w = Vec::new();
-                let expected = quote_ty(gcx, tcx.lvl, it);
-                let doc = crate::typeck::pretty::pp_ty(0, gcx, tcx.lvl, tcx.env.clone(), expected);
-                doc.render(80, &mut w).unwrap();
-                let expected_s = String::from_utf8(w).unwrap();
-
-                let span = gcx.arenas.core.expr(e).span;
-                let report = Report::build(ReportKind::Error, (), span.lo() as usize)
-                    .with_message("mismatched types")
-                    .with_label(
-                        Label::new(span)
-                            .with_color(Color::Red)
-                            .with_message(format!("found type `{inferred_s}`"))
-                            .with_order(0),
-                    );
-
-                let mut report = match type_expectation {
-                    TypeExpectation::Definition(span) => report.with_label(
-                        Label::new(span)
-                            .with_color(Color::Blue)
-                            .with_message(format!("expected type `{expected_s}`"))
-                            .with_order(1),
-                    ),
-                    TypeExpectation::FunctionApp(span, f_span) => report
-                        .with_label(
-                            Label::new(span)
-                                .with_color(Color::Blue)
-                                .with_message(format!(
-                                    "this function expected argument type `{expected_s}`"
-                                ))
-                                .with_order(1),
-                        )
-                        .with_label(
-                            Label::new(f_span)
-                                .with_color(Color::Green)
-                                .with_message("argument type defined here"),
-                        ),
-                    TypeExpectation::BinaryOp(span, op_type) => report
-                        .with_label(
-                            Label::new(span)
-                                .with_color(Color::Blue)
-                                .with_message(format!("this operation had type `{op_type}`"))
-                                .with_order(-1),
-                        )
-                        .with_config(Config::default().with_label_attach(LabelAttach::End)),
-                    TypeExpectation::IfCondition(if_span) => report.with_label(
-                        Label::new(if_span.with_hi(span.hi()).into())
-                            .with_color(Color::Blue)
-                            .with_message("expected type `Boolean` due to this `if`"),
-                    ),
-                    TypeExpectation::IfElse(span) => report
-                        .with_label(
-                            Label::new(span)
-                                .with_color(Color::Blue)
-                                .with_message(format!("expected type `{expected_s}`"))
-                                .with_order(1),
-                        )
-                        .with_note("`if` branches must have the same type"),
-                };
-
-                match err {
-                    UnifyError::Occurs => {
-                        report.set_message("occurs check failed: cannot create recursive type")
-                    }
-                    UnifyError::Scope(id, _) => {
-                        report
-                            .set_message("could not match types: type variable would escape scope");
-                        report.set_help("try adding a type annotation with a `forall` quantifier");
-                        report.add_label(
-                            Label::new(
-                                gcx.arenas
-                                    .core
-                                    .get_node_by_id(id)
-                                    .unwrap()
-                                    .span(gcx)
-                                    .with_hi(
-                                        gcx.arenas
-                                            .core
-                                            .get_node_by_id(id)
-                                            .unwrap()
-                                            .ident(gcx)
-                                            .unwrap()
-                                            .span
-                                            .hi(),
-                                    )
-                                    .into(),
-                            )
-                            .with_color(Color::Blue)
-                            .with_message("type variable defined here was not in scope"),
-                        );
-                    }
-                    UnifyError::SpineMismatch => {}
-                    UnifyError::RigidMismatch => {}
-                }
-                let report = report.finish();
-                gcx.drcx.borrow_mut().report_syncd(report);
-
-                if let CT::Meta(mv, _) | CT::InsertedMeta(mv) = gcx.arenas.core.ty(inferred).kind {
-                    let mv = mv.0.borrow();
-                    let report = Report::build(
-                        ReportKind::Custom("Help", Color::Blue),
-                        (),
-                        mv.1.span.lo() as usize,
-                    )
-                    .with_message(format!(
-                        "{} was a type hole, generated from this expression",
-                        mv.1.name.as_str()
-                    ))
-                    .with_label(Label::new(mv.1.span).with_color(Color::Blue))
-                    .finish();
-                    gcx.drcx.borrow_mut().report_syncd(report);
-                }
-
-                if let CT::Meta(mv, _) | CT::InsertedMeta(mv) = gcx.arenas.core.ty(expected).kind {
-                    let mv = mv.0.borrow();
-                    let report = Report::build(
-                        ReportKind::Custom("Help", Color::Blue),
-                        (),
-                        mv.1.span.lo() as usize,
-                    )
-                    .with_message(format!(
-                        "{} was a type hole, generated from this expression",
-                        mv.1.name.as_str()
-                    ))
-                    .with_label(Label::new(mv.1.span).with_color(Color::Blue))
-                    .finish();
-                    gcx.drcx.borrow_mut().report_syncd(report);
-                }
-
-                return Err(ElabError);
+                unify_error(gcx, tcx, inferred, e, it, type_expectation, err)?;
             }
             e
         }
@@ -802,6 +888,7 @@ pub enum TypeExpectation {
     BinaryOp(Span, &'static str),
     IfCondition(Span),
     IfElse(Span),
+    TupleProj(Span, u64),
 }
 
 pub fn infer(
@@ -1445,6 +1532,72 @@ pub fn infer(
                     e.span,
                 ),
                 vt_then,
+            )
+        }
+        SE::Tuple(spine) => {
+            let (spine, tys) = spine
+                .into_iter()
+                .map(|x| infer(gcx, tcx.clone(), x))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .unzip::<_, _, im::Vector<_>, im::Vector<_>>();
+
+            // TODO: better tuple error messages
+            (
+                ast::Expr::new(
+                    gcx,
+                    gcx.arenas.core.lower_id(e.id),
+                    CE::Tuple(spine),
+                    e.span,
+                ),
+                VTy::new(
+                    gcx,
+                    gcx.arenas.core.next_id(),
+                    VTyKind::Tuple(tys),
+                    Span((u32::MAX..u32::MAX).into()),
+                ),
+            )
+        }
+        SE::TupleProj(expr, ix) => {
+            let mvs = (0..=ix)
+                .map(|ix| {
+                    eval_ty(
+                        gcx,
+                        tcx.env.clone(),
+                        fresh_meta(
+                            gcx,
+                            tcx.lvl,
+                            gcx.arenas.core.next_id(),
+                            Symbol::intern(&format!("?tuple_{ix}")),
+                            e.span,
+                            Span((u32::MAX..u32::MAX).into()),
+                        ),
+                    )
+                })
+                .collect::<im::Vector<_>>();
+            let vt_mvs = VTy::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                VTyKind::TupleFlex(Rc::new(RefCell::new(FlexTuple::Flex(mvs.clone())))),
+                Span((u32::MAX..u32::MAX).into()),
+            );
+
+            let expr = check(
+                gcx,
+                tcx.clone(),
+                expr,
+                vt_mvs,
+                TypeExpectation::TupleProj(e.span, ix),
+            )?;
+
+            (
+                ast::Expr::new(
+                    gcx,
+                    gcx.arenas.core.lower_id(e.id),
+                    CE::TupleProj(expr, ix),
+                    e.span,
+                ),
+                *mvs.get(ix as usize).unwrap(),
             )
         }
         _ => todo!("{:#?}", e),

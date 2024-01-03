@@ -103,7 +103,8 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
                 let t = nf_ty_force(gcx, DeBruijnLvl::from(0usize), im::Vector::new(), t);
                 let mut w1 = Vec::new();
                 let doc =
-                    typeck::pretty::pp_ty(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), t);
+                    typeck::pretty::pp_ty(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), t)
+                        .group();
                 doc.render(80, &mut w1).unwrap();
 
                 println!(
@@ -124,6 +125,7 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
         let main = *ecx.free.get(&id).unwrap();
 
         let expr = eval::eval_expr(gcx, &mut ecx, im::Vector::new(), main);
+        let expr = eval::force_barrier(&mut ecx, expr);
         let expr = eval::quote_expr(gcx, &mut ecx, DeBruijnLvl::from(0usize), expr);
 
         let mut w = Vec::new();

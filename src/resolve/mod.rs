@@ -424,6 +424,11 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                     }
                     rcx.ty_stack.pop();
                 }
+                TyKind::Tuple(v) => {
+                    for ty in v {
+                        rcx.lower_ty(ty)?;
+                    }
+                }
                 TyKind::Err => (),
             };
             Ok(plus)
@@ -490,6 +495,7 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                 self.lower_expr(inn)?;
                 self.expr_stack.pop();
             }
+            ExprKind::Let(..) => todo!(),
             ExprKind::Err => (),
             ExprKind::BinaryOp { left, right, .. } => {
                 self.lower_expr(left)?;
@@ -504,7 +510,14 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                 self.lower_expr(then)?;
                 self.lower_expr(then_else)?;
             }
-            _ => todo!(),
+            ExprKind::Tuple(v) => {
+                for expr in v {
+                    self.lower_expr(expr)?;
+                }
+            }
+            ExprKind::TupleProj(e, _) => {
+                self.lower_expr(e)?;
+            }
         };
         Ok(())
     }

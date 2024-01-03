@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, rc::Rc};
 
 use calypso_base::symbol::Ident;
 use id_arena::{Arena, Id};
@@ -53,6 +53,14 @@ pub enum VTyKind {
     Free(AstId),
     Enum(AstId, VSpine),
     Primitive(PrimTy),
+    Tuple(VSpine),
+    TupleFlex(Rc<RefCell<FlexTuple>>),
+}
+
+#[derive(Debug)]
+pub enum FlexTuple {
+    Rigid(VSpine),
+    Flex(VSpine),
 }
 
 pub fn apply_ty_closure(gcx: &GlobalCtxt, Closure(mut env, t): Closure, u: Id<VTy>) -> Id<VTy> {
@@ -96,6 +104,20 @@ pub fn eval_ty(gcx: &GlobalCtxt, env: Env, ty: Id<Ty>) -> Id<VTy> {
             ty.span,
         ),
         TyKind::Primitive(prim) => VTy::new(gcx, ty.id, VTyKind::Primitive(prim), ty.span),
+        TyKind::Tuple(sp) => VTy::new(
+            gcx,
+            ty.id,
+            VTyKind::Tuple(eval_spine(gcx, env, sp)),
+            ty.span,
+        ),
+        TyKind::TupleFlex(sp) => VTy::new(
+            gcx,
+            ty.id,
+            VTyKind::TupleFlex(Rc::new(RefCell::new(FlexTuple::Flex(eval_spine(
+                gcx, env, sp,
+            ))))),
+            ty.span,
+        ),
     }
 }
 
@@ -112,6 +134,18 @@ pub fn force(gcx: &GlobalCtxt, ty: Id<VTy>) -> Id<VTy> {
         VTyKind::Flex(m, sp) => match m.clone().0.borrow().0 {
             MetaEntry::Solved(t) => force(gcx, apply_meta(gcx, t, sp)),
             MetaEntry::Unsolved => ty,
+        },
+        VTyKind::TupleFlex(m) => match &*m.borrow() {
+            FlexTuple::Rigid(spine) => force(
+                gcx,
+                VTy::new(
+                    gcx,
+                    gcx.arenas.core.next_id(),
+                    VTyKind::Tuple(spine.clone()),
+                    Span((u32::MAX..u32::MAX).into()),
+                ),
+            ),
+            FlexTuple::Flex(_) => ty,
         },
         _ => ty,
     }
@@ -180,6 +214,21 @@ pub fn quote_ty(gcx: &GlobalCtxt, l: DeBruijnLvl, t: Id<VTy>) -> Id<Ty> {
             TyKind::Primitive(ty),
             t.span,
         ),
+        VTyKind::Tuple(sp) => Ty::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            TyKind::Tuple(quote_ty_spine(gcx, l, sp)),
+            t.span,
+        ),
+        VTyKind::TupleFlex(sp) => match &*sp.borrow() {
+            FlexTuple::Flex(sp) => Ty::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                TyKind::TupleFlex(quote_ty_spine(gcx, l, sp.clone())),
+                t.span,
+            ),
+            _ => unreachable!(), // force
+        },
     }
 }
 

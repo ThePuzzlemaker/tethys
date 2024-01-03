@@ -61,6 +61,8 @@ pub enum VExpr {
     },
     Boolean(bool),
     IfThunk(Rc<VExpr>, Id<Expr>, Id<Expr>),
+    Tuple(im::Vector<Rc<VExpr>>),
+    TupleProj(Rc<VExpr>, u64),
 }
 
 fn apply_closure(
@@ -206,7 +208,7 @@ pub struct EvalCtx {
     pub norec: bool,
 }
 
-fn force_barrier(ecx: &mut EvalCtx, e1: Rc<VExpr>) -> Rc<VExpr> {
+pub fn force_barrier(ecx: &mut EvalCtx, e1: Rc<VExpr>) -> Rc<VExpr> {
     match &*e1 {
         VExpr::RecursionBarrier(_, v) if !ecx.norec => force_barrier(ecx, v.upgrade().unwrap()),
         _ => e1.clone(),
@@ -325,6 +327,20 @@ pub fn eval_expr(gcx: &GlobalCtxt, ecx: &mut EvalCtx, env: Env, expr: Id<Expr>) 
                 VExpr::Boolean(true) => eval_expr(gcx, ecx, env.clone(), then),
                 VExpr::Boolean(false) => eval_expr(gcx, ecx, env.clone(), then_else),
                 _ => Rc::new(VExpr::IfThunk(cond.clone(), then, then_else)),
+            }
+        }
+        ExprKind::Tuple(spine) => Rc::new(VExpr::Tuple(
+            spine
+                .into_iter()
+                .map(|x| eval_expr(gcx, ecx, env.clone(), x))
+                .collect(),
+        )),
+        ExprKind::TupleProj(expr, ix) => {
+            let expr = eval_expr(gcx, ecx, env.clone(), expr);
+            let expr = force_barrier(ecx, expr);
+            match &*expr {
+                VExpr::Tuple(vec) => vec.get(ix as usize).unwrap().clone(),
+                _ => Rc::new(VExpr::TupleProj(expr.clone(), ix)),
             }
         }
     }
@@ -523,5 +539,22 @@ pub fn quote_expr(
                 sp,
             )
         }
+        VExpr::Tuple(spine) => Expr::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            ExprKind::Tuple(
+                spine
+                    .iter()
+                    .map(|x| quote_expr(gcx, ecx, l, x.clone()))
+                    .collect(),
+            ),
+            sp,
+        ),
+        VExpr::TupleProj(expr, ix) => Expr::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            ExprKind::TupleProj(quote_expr(gcx, ecx, l, expr.clone()), *ix),
+            sp,
+        ),
     }
 }

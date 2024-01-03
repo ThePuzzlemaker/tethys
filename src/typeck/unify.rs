@@ -1,12 +1,13 @@
-use std::rc::Rc;
+use std::{cmp::Ordering, rc::Rc};
 
+use calypso_base::symbol::Symbol;
 use id_arena::Id;
 
-use crate::{ast::PrimTy, ctxt::GlobalCtxt};
+use crate::{ast::PrimTy, ctxt::GlobalCtxt, parse::Span, typeck::fresh_meta};
 
 use super::{
     ast::{CoreAstId, DeBruijnLvl, MetaEntry, MetaVar, Ty, TyKind},
-    norm::{apply_ty_closure, force, lvl2ix, VSpine, VTy, VTyKind},
+    norm::{apply_ty_closure, force, lvl2ix, FlexTuple, VSpine, VTy, VTyKind},
 };
 
 #[derive(Clone, Debug)]
@@ -136,6 +137,21 @@ fn rename(
             TyKind::Primitive(prim),
             t.span,
         ),
+        Tuple(spine) => Ty::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            TyKind::Tuple(rename_spine(gcx, m, pren, spine)?),
+            t.span,
+        ),
+        TupleFlex(spine) => match &*spine.borrow() {
+            FlexTuple::Flex(spine) => Ty::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                TyKind::TupleFlex(rename_spine(gcx, m, pren, spine.clone())?),
+                t.span,
+            ),
+            _ => unreachable!(),
+        },
     })
 }
 
@@ -213,6 +229,85 @@ pub fn unify(gcx: &GlobalCtxt, l: DeBruijnLvl, t: Id<VTy>, u: Id<VTy>) -> Result
             unify_spine(gcx, l, sp1, sp2)?;
         }
         (Primitive(p1), Primitive(p2)) if p1 == p2 => {}
+        (Tuple(t1), Tuple(t2)) => {
+            unify_spine(gcx, l, t1, t2)?;
+        }
+        (TupleFlex(t1), TupleFlex(t2)) => match (&*t1.borrow(), &*t2.borrow()) {
+            (FlexTuple::Flex(sp1), FlexTuple::Flex(sp2)) => match sp1.len().cmp(&sp2.len()) {
+                Ordering::Less => {
+                    // (A, B, ...) `unify` (X, Y, Z, ...)
+                    // LH side (t1) := RH side (sp2)
+                    // unify spines, truncated:
+                    // A `unify` X, B `unify` Y
+
+                    let sp1 = sp1.clone();
+                    let mut sp2 = sp2.clone();
+                    *t1.borrow_mut() = FlexTuple::Flex(sp2.clone());
+
+                    sp2.truncate(sp1.len());
+                    unify_spine(gcx, l, sp1, sp2)?;
+                }
+                Ordering::Equal => {
+                    // (A, B, ...) `unify` (X, Y, ...)
+                    // no need to change flex constraints
+                    // unify spines, no truncation necessary:
+                    // A `unify` X, B `unify` Y
+                    unify_spine(gcx, l, sp1.clone(), sp2.clone())?;
+                }
+                Ordering::Greater => {
+                    // (A, B, C, ...) `unify` (X, Y, ...)
+                    // RH side (t2) := LH side (sp1)
+                    // unify spines, truncated:
+                    // A `unify` X, B `unify` Y
+
+                    let mut sp1 = sp1.clone();
+                    let sp2 = sp2.clone();
+                    *t2.borrow_mut() = FlexTuple::Flex(sp1.clone());
+
+                    sp1.truncate(sp2.len());
+                    unify_spine(gcx, l, sp1, sp2)?;
+                }
+            },
+            _ => unreachable!(), // force
+        },
+        (TupleFlex(t1), Tuple(sp2)) => {
+            let borrow = t1.borrow();
+            match &*borrow {
+                FlexTuple::Flex(sp1) => {
+                    // (A, B, ...) `unify` (X, Y, Z)
+                    // truncate and unify spines:
+                    // A `unify` X, B `unify` Z
+                    let mut sp2_trunc = sp2.clone();
+                    sp2_trunc.truncate(sp1.len());
+
+                    unify_spine(gcx, l, sp1.clone(), sp2_trunc)?;
+                    // If we succeeded (no rigid mismatch), update ourselves.
+                    // t1 := RH side (sp2)
+                    drop(borrow);
+                    *t1.borrow_mut() = FlexTuple::Rigid(sp2);
+                }
+                _ => unreachable!(), // force
+            };
+        }
+        (Tuple(sp1), TupleFlex(t2)) => {
+            let borrow = t2.borrow();
+            match &*borrow {
+                FlexTuple::Flex(sp2) => {
+                    // (A, B, C) `unify` (X, Y, ...)
+                    // truncate and unify spines:
+                    // A `unify` X, B `unify` Z
+                    let mut sp1_trunc = sp1.clone();
+                    sp1_trunc.truncate(sp2.len());
+
+                    unify_spine(gcx, l, sp1_trunc, sp2.clone())?;
+                    // If we succeeded (no rigid mismatch), update ourselves.
+                    // t2 := LH side (sp1)
+                    drop(borrow);
+                    *t2.borrow_mut() = FlexTuple::Rigid(sp1);
+                }
+                _ => unreachable!(), // force
+            };
+        }
         _ => {
             return Err(UnifyError::RigidMismatch);
         }

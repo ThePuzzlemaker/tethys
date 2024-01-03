@@ -17,7 +17,7 @@ def length : forall 'T. List['T] -> Integer
     	   = λl. List l 0 (λ_ t.1 + (length t))
 def map : forall 'T 'U. List['T] -> ('T -> 'U) -> List['U]
     	= λl f. List l Nil (λh t.Cons (f h) (map t f))
-	 
+
 def id    : forall 'a.'a -> 'a = λx.x
 def const : forall 'a.'a -> 'a -> 'a = λx y.x
 
@@ -27,7 +27,12 @@ def fact : Integer -> Integer
     	 = λn.if n == 0 then 1 else n * fact (n - 1)
 
 def list : List[Integer] = (Cons 0 (Cons 1 (Cons 2 (Cons 3 (Cons 4 Nil)))))
-def main : _ = map list fact
+#def main : _ = map list fact
+
+def baz : (Integer, Boolean) -> Integer = \x. x.0
+def bar : (Integer, Boolean) = (baz (0, true), false)
+
+def main : _ = bar
 # def main : _ = length list
 
 # def foo : forall 'T 'U. List['T] -> ('T -> 'U) -> List['U]

@@ -1,3 +1,5 @@
+use std::iter;
+
 use calypso_base::symbol::Symbol;
 use id_arena::Id;
 use pretty::{DocAllocator, RcAllocator, RcDoc};
@@ -6,7 +8,7 @@ use crate::{
     ast::{
         pretty::{
             prec_binop, PREC_EXPR_APPL, PREC_EXPR_IF, PREC_EXPR_LAMBDA, PREC_EXPR_LET,
-            PREC_EXPR_PRIMARY, PREC_EXPR_UNARY,
+            PREC_EXPR_PRIMARY, PREC_EXPR_TUPLE_PROJ, PREC_EXPR_UNARY,
         },
         BinOpKind, ItemKind, Node, PrimTy,
     },
@@ -90,8 +92,7 @@ pub fn pp_ty(
                 a.append(RcDoc::line())
                     .append("->")
                     .append(RcDoc::space())
-                    .append(b)
-                    .group(),
+                    .append(b),
             )
         }
         TyKind::Forall(x, i, a) => {
@@ -166,6 +167,94 @@ pub fn pp_ty(
         }
         TyKind::Primitive(PrimTy::Integer) => RcDoc::text("Integer"),
         TyKind::Primitive(PrimTy::Boolean) => RcDoc::text("Boolean"),
+
+        TyKind::Tuple(v) => {
+            let v_multi = v.iter().copied().map(|x| {
+                RcAllocator
+                    .nil()
+                    .append(pp_ty(PREC_TY_FORALL, gcx, l, e.clone(), x))
+                    .nest(2)
+                    .append(",")
+                    .append(RcDoc::line())
+            });
+            let v_flat = if v.len() > 1 {
+                RcAllocator
+                    .intersperse(
+                        v.iter()
+                            .copied()
+                            .map(|x| {
+                                RcAllocator
+                                    .nil()
+                                    .append(pp_ty(PREC_TY_FORALL, gcx, l, e.clone(), x))
+                                    .nest(2)
+                            })
+                            .collect::<Vec<_>>(),
+                        RcAllocator.text(",").append(" "),
+                    )
+                    .parens()
+            } else {
+                RcAllocator
+                    .nil()
+                    .append(pp_ty(PREC_TY_FORALL, gcx, l, e.clone(), v[0]).nest(2))
+                    .append(",")
+                    .parens()
+            };
+            RcAllocator
+                .text("(")
+                .append(RcDoc::line())
+                .append(RcAllocator.intersperse(v_multi, RcDoc::nil()).indent(4))
+                .append(")")
+                .flat_alt(v_flat)
+                .group()
+                .into_doc()
+        }
+        TyKind::TupleFlex(v) => {
+            let v_multi = v
+                .iter()
+                .copied()
+                .map(|x| {
+                    RcAllocator
+                        .nil()
+                        .append(pp_ty(PREC_TY_FORALL, gcx, l, e.clone(), x))
+                        .nest(2)
+                        .append(",")
+                        .append(RcDoc::line())
+                })
+                .chain(iter::once(RcAllocator.text("...").append(RcDoc::line())));
+            let v_flat = if v.len() > 1 {
+                RcAllocator
+                    .intersperse(
+                        v.iter()
+                            .copied()
+                            .map(|x| {
+                                RcAllocator
+                                    .nil()
+                                    .append(pp_ty(PREC_TY_FORALL, gcx, l, e.clone(), x))
+                                    .nest(2)
+                            })
+                            .chain(iter::once(RcAllocator.text("...")))
+                            .collect::<Vec<_>>(),
+                        RcAllocator.text(",").append(" "),
+                    )
+                    .parens()
+            } else {
+                RcAllocator
+                    .nil()
+                    .append(pp_ty(PREC_TY_FORALL, gcx, l, e.clone(), v[0]).nest(2))
+                    .append(",")
+                    .append(RcDoc::space())
+                    .append("...")
+                    .parens()
+            };
+            RcAllocator
+                .text("(")
+                .append(RcDoc::line())
+                .append(RcAllocator.intersperse(v_multi, RcDoc::nil()).indent(4))
+                .append(")")
+                .flat_alt(v_flat)
+                .group()
+                .into_doc()
+        }
     }
 }
 
@@ -187,6 +276,14 @@ pub fn pp_expr(
                 .unwrap()
                 .as_str(),
         ),
+        ExprKind::TupleProj(expr, ix) => {
+            let expr = pp_expr(PREC_EXPR_TUPLE_PROJ, gcx, l, e, expr);
+            maybe_paren(
+                prec,
+                PREC_EXPR_TUPLE_PROJ,
+                expr.append(".").append(ix.to_string()),
+            )
+        }
         ExprKind::Free(id) | ExprKind::EnumRecursor(id) => RcDoc::text(
             gcx.arenas
                 .ast
@@ -237,7 +334,7 @@ pub fn pp_expr(
             let t = RcAllocator
                 .text(":")
                 .append(RcDoc::space())
-                .append(RcAllocator.nil().append(t).align())
+                .append(RcAllocator.nil().append(t).align().group())
                 .append(RcDoc::line())
                 .append("=")
                 .append(RcDoc::space())
@@ -271,7 +368,7 @@ pub fn pp_expr(
                     .append(RcDoc::line())
                     .align()
                     .append("@")
-                    .append(t)
+                    .append(t.group())
                     .group()
                     .into_doc(),
             )
@@ -355,6 +452,46 @@ pub fn pp_expr(
                     .align()
                     .into_doc(),
             )
+        }
+        ExprKind::Tuple(v) => {
+            let v_multi = v.iter().copied().map(|x| {
+                RcAllocator
+                    .nil()
+                    .append(pp_expr(PREC_EXPR_LET, gcx, l, e.clone(), x))
+                    .nest(2)
+                    .append(",")
+                    .append(RcDoc::line())
+            });
+            let v_flat = if v.len() > 1 {
+                RcAllocator
+                    .intersperse(
+                        v.iter()
+                            .copied()
+                            .map(|x| {
+                                RcAllocator
+                                    .nil()
+                                    .append(pp_expr(PREC_EXPR_LET, gcx, l, e.clone(), x))
+                                    .nest(2)
+                            })
+                            .collect::<Vec<_>>(),
+                        RcAllocator.text(",").append(" "),
+                    )
+                    .parens()
+            } else {
+                RcAllocator
+                    .nil()
+                    .append(pp_expr(PREC_EXPR_LET, gcx, l, e.clone(), v[0]).nest(2))
+                    .append(",")
+                    .parens()
+            };
+            RcAllocator
+                .text("(")
+                .append(RcDoc::line())
+                .append(RcAllocator.intersperse(v_multi, RcDoc::nil()).indent(4))
+                .append(")")
+                .flat_alt(v_flat)
+                .group()
+                .into_doc()
         } // ExprKind::UnaryMinus(expr) => maybe_paren(
           //     prec,
           //     PREC_EXPR_UNARY,
