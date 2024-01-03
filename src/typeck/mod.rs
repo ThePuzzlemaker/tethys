@@ -730,7 +730,7 @@ fn unify_error(
         gcx.drcx.borrow_mut().report_syncd(report);
     }
 
-    return Ok(e);
+    Ok(e)
 }
 
 pub fn check(
@@ -1171,6 +1171,7 @@ pub fn infer(
                     let (pos, vt) = tcx
                         .vals
                         .iter()
+                        .rev()
                         .enumerate()
                         .find_map(|(i, (x, t))| if *x == id { Some((i, t)) } else { None })
                         .unwrap();

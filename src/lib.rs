@@ -13,6 +13,7 @@ use crate::{
 };
 
 pub mod ast;
+pub mod codegen;
 pub mod ctxt;
 pub mod diag;
 pub mod error;
@@ -123,17 +124,46 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
             .unwrap();
         let id = gcx.arenas.ast.item(*item).id;
         let main = *ecx.free.get(&id).unwrap();
+        {
+            let mut w = Vec::new();
+            let doc =
+                typeck::pretty::pp_expr(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), main);
+            doc.render(80, &mut w).unwrap();
+            println!("{}", String::from_utf8(w).unwrap());
+        }
 
-        let expr = eval::eval_expr(gcx, &mut ecx, im::Vector::new(), main);
-        let expr = eval::force_barrier(&mut ecx, expr);
-        let expr = eval::quote_expr(gcx, &mut ecx, DeBruijnLvl::from(0usize), expr);
+        let (lift, conv) = codegen::closure::closure_convert(gcx, &mut ecx, main);
 
-        let mut w = Vec::new();
-        //let doc = eval::pretty::pp_expr(0, gcx, &mut ecx, expr);
-        let doc =
-            typeck::pretty::pp_expr(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), expr);
-        doc.render(80, &mut w).unwrap();
-        println!("{}", String::from_utf8(w).unwrap());
+        println!("== Lifted ==");
+        for val in lift {
+            let mut w = Vec::new();
+            let doc =
+                typeck::pretty::pp_expr(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), val);
+            doc.render(80, &mut w).unwrap();
+            println!(
+                "{}: {}",
+                gcx.arenas.core.expr(val).id,
+                String::from_utf8(w).unwrap()
+            );
+        }
+        println!("== Main term ==");
+        {
+            let mut w = Vec::new();
+            let doc =
+                typeck::pretty::pp_expr(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), conv);
+            doc.render(80, &mut w).unwrap();
+            println!("{}", String::from_utf8(w).unwrap());
+        }
+        // let expr = eval::eval_expr(gcx, &mut ecx, im::Vector::new(), main);
+        // let expr = eval::force_barrier(&mut ecx, expr);
+        // let expr = eval::quote_expr(gcx, &mut ecx, DeBruijnLvl::from(0usize), expr);
+
+        // let mut w = Vec::new();
+        // //let doc = eval::pretty::pp_expr(0, gcx, &mut ecx, expr);
+        // let doc =
+        //     typeck::pretty::pp_expr(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), expr);
+        // doc.render(80, &mut w).unwrap();
+        // println!("{}", String::from_utf8(w).unwrap());
         // println!("{:#?}", items);
         // println!("{:#?}", gcx.arenas.ast.res_data.borrow().to_hash_map());
         // println!("\n{:#?}", gcx);

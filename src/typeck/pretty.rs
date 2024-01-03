@@ -267,7 +267,7 @@ pub fn pp_expr(
 ) -> RcDoc<'_> {
     match gcx.arenas.core.expr(expr).kind {
         ExprKind::Unit => RcDoc::text("()"),
-        ExprKind::Var(id, _) => RcDoc::text(
+        ExprKind::Var(id, ix) => RcDoc::text(
             gcx.arenas
                 .core
                 .get_node_by_id(id)
@@ -275,7 +275,8 @@ pub fn pp_expr(
                 .ident(gcx)
                 .unwrap()
                 .as_str(),
-        ),
+        )
+        .append(format!(":{ix}")),
         ExprKind::TupleProj(expr, ix) => {
             let expr = pp_expr(PREC_EXPR_TUPLE_PROJ, gcx, l, e, expr);
             maybe_paren(
@@ -382,7 +383,6 @@ pub fn pp_expr(
                 RcDoc::text("Λ").append(i.as_str()).append(".").append(body),
             )
         }
-        ExprKind::Fix(_, _, _) => todo!(),
         ExprKind::Err(_) => RcDoc::text("<error>"),
         ExprKind::Number(v) => RcDoc::text(v.to_string()),
         ExprKind::Boolean(b) => RcDoc::text(b.to_string()),
@@ -492,22 +492,54 @@ pub fn pp_expr(
                 .flat_alt(v_flat)
                 .group()
                 .into_doc()
-        } // ExprKind::UnaryMinus(expr) => maybe_paren(
-          //     prec,
-          //     PREC_EXPR_UNARY,
-          //     RcAllocator
-          //         .text("-")
-          //         .append(pp_expr(PREC_EXPR_UNARY, gcx, l, e, expr))
-          //         .into_doc(),
-          // ),
+        }
+        ExprKind::LiftedLam(v, x) => {
+            let x = pp_expr(PREC_EXPR_LET, gcx, l, e, x);
+            maybe_paren(
+                prec,
+                PREC_EXPR_LAMBDA,
+                RcAllocator
+                    .text("λ*")
+                    .append(RcAllocator.intersperse(
+                        v.iter().map(|x| {
+                            RcDoc::text(format!(
+                                "{:#?}:{}",
+                                x.index(),
+                                gcx.arenas
+                                    .core
+                                    .get_node_by_id(*x)
+                                    .unwrap()
+                                    .ident(gcx)
+                                    .unwrap()
+                                    .as_str()
+                            ))
+                        }),
+                        RcDoc::space(),
+                    ))
+                    .append(".")
+                    .append(x)
+                    .into_doc(),
+            )
+        }
+        ExprKind::LiftedVar(v) => RcAllocator.text(format!("@idx={v}")).into_doc(),
 
-          // ExprKind::UnaryNot(expr) => maybe_paren(
-          //     prec,
-          //     PREC_EXPR_UNARY,
-          //     RcAllocator
-          //         .text("!")
-          //         .append(pp_expr(PREC_EXPR_UNARY, gcx, l, e, expr))
-          //         .into_doc(),
-          // ),
+        ExprKind::LiftedFree(v) => RcAllocator.text(format!("@lvl={v}")).into_doc(),
+        // ExprKind::UnaryMinus(expr) => maybe_paren(
+        //     prec,
+        //     PREC_EXPR_UNARY,
+        //     RcAllocator
+        //         .text("-")
+        //         .append(pp_expr(PREC_EXPR_UNARY, gcx, l, e, expr))
+        //         .into_doc(),
+        // ),
+
+        // ExprKind::UnaryNot(expr) => maybe_paren(
+        //     prec,
+        //     PREC_EXPR_UNARY,
+        //     RcAllocator
+        //         .text("!")
+        //         .append(pp_expr(PREC_EXPR_UNARY, gcx, l, e, expr))
+        //         .into_doc(),
+        // ),
     }
 }

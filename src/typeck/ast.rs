@@ -117,11 +117,13 @@ impl Expr {
 pub enum ExprKind {
     Unit,
     Var(CoreAstId, DeBruijnIdx),
+    LiftedVar(DeBruijnIdx),
+    LiftedFree(DeBruijnLvl),
     Lam(CoreAstId, Ident, Id<Expr>),
+    LiftedLam(im::Vector<CoreAstId>, Id<Expr>),
     App(Id<Expr>, Id<Expr>),
     TyApp(Id<Expr>, Id<Ty>),
     Let(CoreAstId, Ident, Id<Ty>, Id<Expr>, Id<Expr>),
-    Fix(CoreAstId, Ident, Id<Expr>),
     TyAbs(CoreAstId, Ident, Id<Expr>),
     Free(AstId),
     EnumConstructor(AstId, usize),
@@ -187,7 +189,6 @@ impl Expr {
                 Self::report_deferred(e1, gcx);
                 Self::report_deferred(e2, gcx);
             }
-            ExprKind::Fix(_, _, x) => Self::report_deferred(x, gcx),
             ExprKind::TyAbs(_, _, x) => Self::report_deferred(x, gcx),
             ExprKind::Err(err) => {
                 gcx.drcx
@@ -313,9 +314,11 @@ impl Node {
                 | ExprKind::If(..)
                 | ExprKind::Tuple(..)
                 | ExprKind::TupleProj(..) => None,
+                ExprKind::LiftedLam(..) | ExprKind::LiftedVar(..) | ExprKind::LiftedFree(..) => {
+                    unimplemented!()
+                }
                 ExprKind::Lam(_, id, _)
                 | ExprKind::Let(_, id, _, _, _)
-                | ExprKind::Fix(_, id, _)
                 | ExprKind::TyAbs(_, id, _) => Some(id),
             },
             Self::Ty(ty) => match gcx.arenas.core.ty(ty).kind {

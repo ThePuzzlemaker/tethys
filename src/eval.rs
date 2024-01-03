@@ -240,7 +240,6 @@ pub fn eval_expr(gcx: &GlobalCtxt, ecx: &mut EvalCtx, env: Env, expr: Id<Expr>) 
                 &e1,
             )
         }
-        ExprKind::Fix(_, _, _) => todo!(),
         ExprKind::TyAbs(_, _, e) | ExprKind::TyApp(e, _) => eval_expr(gcx, ecx, env, e),
         ExprKind::Free(id) => {
             if ecx.norec {
@@ -343,6 +342,7 @@ pub fn eval_expr(gcx: &GlobalCtxt, ecx: &mut EvalCtx, env: Env, expr: Id<Expr>) 
                 _ => Rc::new(VExpr::TupleProj(expr.clone(), ix)),
             }
         }
+        _ => unimplemented!(),
     }
 }
 

@@ -29,10 +29,14 @@ def fact : Integer -> Integer
 def list : List[Integer] = (Cons 0 (Cons 1 (Cons 2 (Cons 3 (Cons 4 Nil)))))
 #def main : _ = map list fact
 
-def baz : (Integer, Boolean) -> Integer = \x. x.0
-def bar : (Integer, Boolean) = (baz (0, true), false)
+# def baz : (Integer, Boolean) -> Integer = \x. x.0
+# def bar : (Integer, Boolean) = (baz (0, true), false)
 
-def main : _ = bar
+# def main : _ = bar
+
+def main : Integer -> Integer -> List[Integer] -> List[Integer]
+    	 = \a b xs.let foo = \x.x + ((\_. a + b) ()) in
+	      	   map xs foo
 # def main : _ = length list
 
 # def foo : forall 'T 'U. List['T] -> ('T -> 'U) -> List['U]
