@@ -42,7 +42,7 @@ version = "0.1.37"
 features = ["max_level_trace", "release_max_level_info"]
 
 [dependencies.serde]
-version = "1.0.147"
+version = "1.0.194"
 optional = true
 features = ["derive"]
 
