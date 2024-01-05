@@ -45,18 +45,14 @@ struct ConvCtxt {
 
 impl ConvCtxt {}
 
-pub fn closure_convert(
-    gcx: &GlobalCtxt,
-    ecx: &mut EvalCtx,
-    term: Id<Expr>,
-) -> (Vec<Id<Expr>>, Id<Expr>) {
+pub fn closure_convert(gcx: &GlobalCtxt, term: Id<Expr>) -> (Vec<Id<Expr>>, Id<Expr>) {
     let mut ctx = ConvCtxt {
         lifted: vec![],
         env: vec![],
         scopes: vec![],
     };
 
-    let res = convert(gcx, &mut ctx, ecx, term, 0, Mode::Root);
+    let res = convert(gcx, &mut ctx, term, 0, Mode::Root);
     (ctx.lifted, res)
 }
 
@@ -80,7 +76,6 @@ enum Mode {
 fn convert(
     gcx: &GlobalCtxt,
     ctx: &mut ConvCtxt,
-    ecx: &mut EvalCtx,
     term: Id<Expr>,
     scope_ix: usize,
     mode: Mode,
@@ -113,7 +108,7 @@ fn convert(
             scope.len += 1;
             ctx.env.push(i);
 
-            convert(gcx, ctx, ecx, body, scope_ix, Mode::Collect)
+            convert(gcx, ctx, body, scope_ix, Mode::Collect)
         }
         ExprKind::Lam(i, _, body) if mode == Mode::Traverse || mode == Mode::Root => {
             let mut scope = Scope {
@@ -124,13 +119,13 @@ fn convert(
             ctx.env.push(i);
             ctx.scopes.push(scope);
 
-            let next_scope_ix = if mode == Mode::Root {
+            let next_scope_ix = if ctx.scopes.len() == 1 {
                 scope_ix
             } else {
                 scope_ix + 1
             };
 
-            let res = convert(gcx, ctx, ecx, body, next_scope_ix, Mode::Collect);
+            let res = convert(gcx, ctx, body, next_scope_ix, Mode::Collect);
 
             let vars = &ctx.env[ctx.scopes[next_scope_ix].offset
                 ..ctx.scopes[next_scope_ix].offset + ctx.scopes[next_scope_ix].len];
@@ -151,11 +146,12 @@ fn convert(
             if mode != Mode::Root {
                 ctx.lifted.push(res);
             }
-            let res = ctx.scopes[next_scope_ix]
+
+            let xs = ctx.scopes[next_scope_ix]
                 .free
                 .clone()
                 .iter()
-                .fold(res, |acc, id| {
+                .map(|id| {
                     let mut free_scope = None;
                     let mut free_ix = None;
                     let mut free_scope_ix = None;
@@ -173,7 +169,7 @@ fn convert(
                         };
                     }
 
-                    if mode != Mode::Root {
+                    if ctx.scopes.len() != 1 {
                         for scope in free_scope_ix.unwrap() + 1..next_scope_ix {
                             let scope_offset = ctx.scopes[scope].offset;
                             let scope_len = ctx.scopes[scope].len;
@@ -185,16 +181,28 @@ fn convert(
                             );
                         }
                     }
-                    let x = Expr::new(
+
+                    Expr::new(
                         gcx,
                         gcx.arenas.core.next_id(),
                         ExprKind::LiftedVar(DeBruijnIdx::from(
                             free_ix.unwrap() - free_scope.unwrap().offset,
                         )),
                         sp,
-                    );
-                    Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::App(acc, x), sp)
-                });
+                    )
+                })
+                .collect::<im::Vector<_>>();
+
+            let res = if xs.is_empty() {
+                res
+            } else {
+                Expr::new(
+                    gcx,
+                    gcx.arenas.core.next_id(),
+                    ExprKind::LiftedApp(res, xs),
+                    sp,
+                )
+            };
 
             ctx.env
                 .truncate(ctx.env.len() - ctx.scopes[next_scope_ix].len);
@@ -203,12 +211,12 @@ fn convert(
             res
         }
         ExprKind::App(f, x) => {
-            let f = convert(gcx, ctx, ecx, f, scope_ix, Mode::Traverse);
-            let x = convert(gcx, ctx, ecx, x, scope_ix, Mode::Traverse);
+            let f = convert(gcx, ctx, f, scope_ix, Mode::Traverse);
+            let x = convert(gcx, ctx, x, scope_ix, Mode::Traverse);
             Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::App(f, x), sp)
         }
         ExprKind::TyApp(e, _) | ExprKind::TyAbs(_, _, e) => {
-            convert(gcx, ctx, ecx, e, scope_ix, Mode::Traverse)
+            convert(gcx, ctx, e, scope_ix, Mode::Traverse)
         }
         // TODO: lower `let`s elsewhere?
         ExprKind::Let(x, i, _, e1, e2) => {
@@ -221,11 +229,11 @@ fn convert(
                 ),
                 sp,
             );
-            convert(gcx, ctx, ecx, e2, scope_ix, Mode::Traverse)
+            convert(gcx, ctx, e2, scope_ix, Mode::Traverse)
         }
         ExprKind::BinaryOp { left, kind, right } => {
-            let left = convert(gcx, ctx, ecx, left, scope_ix, Mode::Traverse);
-            let right = convert(gcx, ctx, ecx, right, scope_ix, Mode::Traverse);
+            let left = convert(gcx, ctx, left, scope_ix, Mode::Traverse);
+            let right = convert(gcx, ctx, right, scope_ix, Mode::Traverse);
             Expr::new(
                 gcx,
                 gcx.arenas.core.next_id(),
@@ -234,9 +242,9 @@ fn convert(
             )
         }
         ExprKind::If(cond, then, then_else) => {
-            let cond = convert(gcx, ctx, ecx, cond, scope_ix, Mode::Traverse);
-            let then = convert(gcx, ctx, ecx, then, scope_ix, Mode::Traverse);
-            let then_else = convert(gcx, ctx, ecx, then_else, scope_ix, Mode::Traverse);
+            let cond = convert(gcx, ctx, cond, scope_ix, Mode::Traverse);
+            let then = convert(gcx, ctx, then, scope_ix, Mode::Traverse);
+            let then_else = convert(gcx, ctx, then_else, scope_ix, Mode::Traverse);
             Expr::new(
                 gcx,
                 gcx.arenas.core.next_id(),
@@ -249,13 +257,13 @@ fn convert(
             gcx.arenas.core.next_id(),
             ExprKind::Tuple(
                 v.into_iter()
-                    .map(|x| convert(gcx, ctx, ecx, x, scope_ix, Mode::Traverse))
+                    .map(|x| convert(gcx, ctx, x, scope_ix, Mode::Traverse))
                     .collect(),
             ),
             sp,
         ),
         ExprKind::TupleProj(x, n) => {
-            let x = convert(gcx, ctx, ecx, x, scope_ix, Mode::Traverse);
+            let x = convert(gcx, ctx, x, scope_ix, Mode::Traverse);
             Expr::new(
                 gcx,
                 gcx.arenas.core.next_id(),

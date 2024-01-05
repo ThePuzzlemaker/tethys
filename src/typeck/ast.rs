@@ -16,7 +16,7 @@ use crate::{
 };
 
 use super::{
-    norm::{nf_ty_force, FlexTuple},
+    norm::{nf_ty_force, FlexTuple, VTy},
     TypeckCtxt,
 };
 
@@ -69,6 +69,87 @@ impl Ty {
         );
         x
     }
+
+    pub fn is_arrow(gcx: &GlobalCtxt, mut this: Id<Ty>) -> bool {
+        while let TyKind::Forall(_, _, b) = gcx.arenas.core.ty(this).kind {
+            this = b;
+        }
+        matches!(gcx.arenas.core.ty(this).kind, TyKind::Arrow(..))
+    }
+
+    /// N.B. this function only checks for outer monotypes.
+    /// Higher-rank function inputs may still be present. Use this in
+    /// combination with [`Self::is_higher_rank`] to check for full
+    /// monotypes.
+    pub fn is_monotype(gcx: &GlobalCtxt, this: Id<Ty>) -> bool {
+        !matches!(gcx.arenas.core.ty(this).kind, TyKind::Forall(..))
+    }
+
+    pub fn contains_holes(
+        gcx: &GlobalCtxt,
+        this: Id<Ty>,
+        l: DeBruijnLvl,
+        mut e: im::Vector<Id<VTy>>,
+    ) -> bool {
+        match gcx
+            .arenas
+            .core
+            .ty(nf_ty_force(gcx, l, e.clone(), this))
+            .kind
+        {
+            TyKind::Unit | TyKind::Primitive(_) | TyKind::Free(_) | TyKind::Var(..) => false,
+            TyKind::Arrow(a, b) => {
+                Self::contains_holes(gcx, a, l, e.clone()) || Self::contains_holes(gcx, b, l, e)
+            }
+            TyKind::Forall(x, _, b) => {
+                e.push_back(VTy::rigid(gcx, gcx.arenas.core.next_id(), x, l));
+                Self::contains_holes(gcx, b, l + 1, e)
+            }
+            TyKind::Meta(_, _) | TyKind::InsertedMeta(_) => true,
+            TyKind::Enum(_, spine) | TyKind::Tuple(spine) => spine
+                .iter()
+                .any(|x| Self::contains_holes(gcx, *x, l, e.clone())),
+            // Flex-tuples act as holes
+            TyKind::TupleFlex(_) => true,
+        }
+    }
+
+    pub fn is_higher_rank(
+        gcx: &GlobalCtxt,
+        this: Id<Ty>,
+        l: DeBruijnLvl,
+        e: im::Vector<Id<VTy>>,
+    ) -> bool {
+        fn inner(
+            gcx: &GlobalCtxt,
+            this: Id<Ty>,
+            l: DeBruijnLvl,
+            mut e: im::Vector<Id<VTy>>,
+            outer: bool,
+        ) -> bool {
+            match gcx
+                .arenas
+                .core
+                .ty(nf_ty_force(gcx, l, e.clone(), this))
+                .kind
+            {
+                TyKind::Unit | TyKind::Primitive(_) | TyKind::Var(..) | TyKind::Free(_) => false,
+                TyKind::Arrow(a, b) => {
+                    inner(gcx, a, l, e.clone(), false) || inner(gcx, b, l, e, false)
+                }
+                TyKind::Forall(x, _, b) if outer => {
+                    e.push_back(VTy::rigid(gcx, gcx.arenas.core.next_id(), x, l));
+                    inner(gcx, b, l, e, true)
+                }
+                TyKind::Forall(_, _, _) => true,
+                TyKind::Meta(_, _) | TyKind::InsertedMeta(_) => false,
+                TyKind::Enum(_, spine) | TyKind::Tuple(spine) | TyKind::TupleFlex(spine) => {
+                    spine.iter().any(|x| inner(gcx, *x, l, e.clone(), false))
+                }
+            }
+        }
+        inner(gcx, this, l, e, true)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -118,9 +199,12 @@ pub enum ExprKind {
     Unit,
     Var(CoreAstId, DeBruijnIdx),
     LiftedVar(DeBruijnIdx),
+    /// N.B. this level is only valid within the most recent
+    /// [`ExprKind::LiftedLam`] binder
     LiftedFree(DeBruijnLvl),
     Lam(CoreAstId, Ident, Id<Expr>),
     LiftedLam(im::Vector<CoreAstId>, Id<Expr>),
+    LiftedApp(Id<Expr>, im::Vector<Id<Expr>>),
     App(Id<Expr>, Id<Expr>),
     TyApp(Id<Expr>, Id<Ty>),
     Let(CoreAstId, Ident, Id<Ty>, Id<Expr>, Id<Expr>),
@@ -314,7 +398,10 @@ impl Node {
                 | ExprKind::If(..)
                 | ExprKind::Tuple(..)
                 | ExprKind::TupleProj(..) => None,
-                ExprKind::LiftedLam(..) | ExprKind::LiftedVar(..) | ExprKind::LiftedFree(..) => {
+                ExprKind::LiftedLam(..)
+                | ExprKind::LiftedVar(..)
+                | ExprKind::LiftedFree(..)
+                | ExprKind::LiftedApp(..) => {
                     unimplemented!()
                 }
                 ExprKind::Lam(_, id, _)

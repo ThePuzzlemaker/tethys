@@ -1,8 +1,5 @@
 use std::cell::RefCell;
 
-
-
-
 use crate::{
     ast::AstArenas,
     diag::DiagReportCtxt,

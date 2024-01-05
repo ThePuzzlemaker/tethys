@@ -1,4 +1,7 @@
+use std::collections::HashMap;
+
 use ariadne::Source;
+use calypso_base::symbol::Symbol;
 use ctxt::GlobalCtxt;
 use error::TysResult;
 use eval::EvalCtx;
@@ -42,7 +45,8 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
             drcx.clear();
         }
 
-        let mut ecx = EvalCtx::default();
+        let mut values = HashMap::new();
+        let mut lifted = Vec::new();
         for &item in &items {
             let mut w = Vec::new();
             let doc = ast::pretty::pp_item(gcx, item);
@@ -89,7 +93,7 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
                 }
                 let e = e.unwrap();
                 Expr::report_deferred(e, gcx);
-                ecx.free.insert(gcx.arenas.ast.item(item).id, e);
+                let t = nf_ty_force(gcx, DeBruijnLvl::from(0usize), im::Vector::new(), t);
 
                 let mut w = Vec::new();
                 let doc = typeck::pretty::pp_expr(
@@ -101,7 +105,6 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
                 );
                 doc.render(80, &mut w).unwrap();
 
-                let t = nf_ty_force(gcx, DeBruijnLvl::from(0usize), im::Vector::new(), t);
                 let mut w1 = Vec::new();
                 let doc =
                     typeck::pretty::pp_ty(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), t)
@@ -114,6 +117,10 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
                     String::from_utf8(w1).unwrap()
                 );
 
+                let (lift, e) = codegen::closure::closure_convert(gcx, e);
+                lifted.extend(lift.into_iter());
+                values.insert(gcx.arenas.ast.item(item).id, (e, t));
+
                 println!();
             }
         }
@@ -123,7 +130,7 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
             .find(|&&x| gcx.arenas.ast.item(x).ident.as_str() == "main")
             .unwrap();
         let id = gcx.arenas.ast.item(*item).id;
-        let main = *ecx.free.get(&id).unwrap();
+        let &(main, _) = values.get(&id).unwrap();
         {
             let mut w = Vec::new();
             let doc =
@@ -132,27 +139,50 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
             println!("{}", String::from_utf8(w).unwrap());
         }
 
-        let (lift, conv) = codegen::closure::closure_convert(gcx, &mut ecx, main);
+        // println!("== Lifted ==");
+        // for &val in &lift {
+        //     let mut w = Vec::new();
+        //     let doc =
+        //         typeck::pretty::pp_expr(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), val);
+        //     doc.render(80, &mut w).unwrap();
+        //     println!(
+        //         "{}: {}",
+        //         gcx.arenas.core.expr(val).id,
+        //         String::from_utf8(w).unwrap()
+        //     );
+        // }
+        // println!("== Main term ==");
+        // {
+        //     let mut w = Vec::new();
+        //     let doc =
+        //         typeck::pretty::pp_expr(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), main);
+        //     doc.render(80, &mut w).unwrap();
+        //     println!("{}", String::from_utf8(w).unwrap());
+        // }
 
-        println!("== Lifted ==");
-        for val in lift {
-            let mut w = Vec::new();
-            let doc =
-                typeck::pretty::pp_expr(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), val);
-            doc.render(80, &mut w).unwrap();
-            println!(
-                "{}: {}",
-                gcx.arenas.core.expr(val).id,
-                String::from_utf8(w).unwrap()
+        let mut ccx = codegen::CodegenCtxt::new(gcx, values.clone());
+
+        for val in lifted {
+            let func = ccx.build_func(
+                Symbol::intern(&format!("lifted.{}", gcx.arenas.core.expr(val).id)),
+                val,
             );
         }
-        println!("== Main term ==");
-        {
-            let mut w = Vec::new();
-            let doc =
-                typeck::pretty::pp_expr(0, gcx, DeBruijnLvl::from(0usize), im::Vector::new(), conv);
-            doc.render(80, &mut w).unwrap();
-            println!("{}", String::from_utf8(w).unwrap());
+        for (id, (func, _)) in values {
+            ccx.build_func(
+                Symbol::intern(&format!(
+                    "{}.{}",
+                    gcx.arenas
+                        .ast
+                        .get_node_by_id(id)
+                        .unwrap()
+                        .ident(gcx)
+                        .unwrap()
+                        .symbol,
+                    gcx.arenas.core.expr(func).id
+                )),
+                func,
+            );
         }
         // let expr = eval::eval_expr(gcx, &mut ecx, im::Vector::new(), main);
         // let expr = eval::force_barrier(&mut ecx, expr);

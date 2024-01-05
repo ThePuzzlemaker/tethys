@@ -328,6 +328,23 @@ pub fn pp_expr(
                     .into_doc(),
             )
         }
+        ExprKind::LiftedApp(f, xs) => {
+            let f = pp_expr(PREC_EXPR_APPL, gcx, l, e.clone(), f);
+            let xs = xs
+                .iter()
+                .map(|x| pp_expr(PREC_EXPR_PRIMARY, gcx, l, e.clone(), *x));
+            let xs = RcAllocator.intersperse(xs, RcDoc::softline());
+            maybe_paren(
+                prec,
+                PREC_EXPR_APPL,
+                (RcAllocator.nil().append(f))
+                    .align()
+                    .append(xs)
+                    .align()
+                    .group()
+                    .into_doc(),
+            )
+        }
         ExprKind::Let(_, i, t, e1, e2) => {
             let t = pp_ty(PREC_TY_FORALL, gcx, l, e.clone(), t);
             let e1 = pp_expr(PREC_EXPR_LET, gcx, l, e.clone(), e1);
