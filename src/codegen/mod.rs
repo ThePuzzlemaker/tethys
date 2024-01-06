@@ -12,9 +12,10 @@ use crate::{
     typeck::ast::{CoreAstId, Expr, ExprKind, Ty},
 };
 
-use self::ssa::{Block, CursorPosition, Function, FunctionCursor, Value};
+use self::ssa::{Block, CursorPosition, Function, FunctionCursor, InsnBuilder, Value};
 
 pub mod closure;
+pub mod constant_prop;
 pub mod ssa;
 
 #[derive(Debug)]
@@ -48,42 +49,11 @@ impl<'gcx> CodegenCtxt<'gcx> {
         let res = self.build_expr(&mut cursor, body, vals);
         cursor.ret(&[res]);
 
-        func.calculate_dominators();
-        func.pretty();
+        func.recalculate_cfg();
+        func.recalculate_dominators();
         func.assert_valid();
         let id = self.gcx.arenas.core.expr(expr).id;
         self.bodies.insert(id, func);
-        // println!("== Dominators: ==");
-        // for (block, val) in func.dfg.dominators.iter() {
-        //     println!(
-        //         "{}: {}",
-        //         block.pretty(&func).pretty(80),
-        //         RcAllocator
-        //             .intersperse(
-        //                 val.iter()
-        //                     .sorted_by_key(|x| x.as_u32())
-        //                     .map(|x| x.pretty(&func)),
-        //                 RcDoc::text(",").append(RcDoc::space())
-        //             )
-        //             .pretty(80),
-        //     );
-        // }
-        // println!("== Postdominators: ==");
-        // for (block, val) in func.dfg.postdominators.iter() {
-        //     println!(
-        //         "{}: {}",
-        //         block.pretty(&func).pretty(80),
-        //         RcAllocator
-        //             .intersperse(
-        //                 val.iter()
-        //                     .sorted_by_key(|x| x.as_u32())
-        //                     .map(|x| x.pretty(&func)),
-        //                 RcDoc::text(",").append(RcDoc::space())
-        //             )
-        //             .pretty(80),
-        //     );
-        // }
-        println!();
 
         self.bodies.get_mut(&id).unwrap()
     }

@@ -17,244 +17,307 @@ use crate::{ctxt::GlobalCtxt, typeck::ast::CoreAstId};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum InsnData {
-    IntegerConst(i64),
-    IntegerAdd(Value, Value),
-    IntegerSub(Value, Value),
-    IntegerMult(Value, Value),
-    IntegerDiv(Value, Value),
-    IntegerMod(Value, Value),
-    IntegerShl(Value, Value),
-    IntegerShr(Value, Value),
-    IntegerOr(Value, Value),
-    IntegerXor(Value, Value),
-    IntegerAnd(Value, Value),
-    IntegerPow(Value, Value),
-    IntegerEq(Value, Value),
-    IntegerNeq(Value, Value),
-    IntegerGt(Value, Value),
-    IntegerLt(Value, Value),
-    IntegerGte(Value, Value),
-    IntegerLte(Value, Value),
-    BooleanConst(bool),
-    BrIf(Value, Block, EntityList<Value>, Block, EntityList<Value>),
-    Jmp(Block, EntityList<Value>),
-    Return(EntityList<Value>),
-    MakeClosure(CoreAstId, EntityList<Value>),
-    CallClosure(Value, EntityList<Value>),
-    Call(CoreAstId, EntityList<Value>),
-    LoadStatic(CoreAstId),
+    Nullary(Opcode),
+    Unary(Opcode, Value),
+    UnaryImm(Opcode, Immediate),
+    Binary(Opcode, [Value; 2]),
+    BrIf(Opcode, Value, [BlockRef; 2]),
+    Call(Opcode, CoreAstId, EntityList<Value>),
+    CallClosure(Opcode, Value, EntityList<Value>),
+    MakeClosure(Opcode, CoreAstId, EntityList<Value>),
+    LoadStatic(Opcode, CoreAstId),
+    Nary(Opcode, EntityList<Value>),
+    BlockCall(Opcode, BlockRef),
+}
+
+impl InsnData {
+    pub fn opcode(self) -> Opcode {
+        match self {
+            InsnData::Nullary(op)
+            | InsnData::Unary(op, ..)
+            | InsnData::UnaryImm(op, ..)
+            | InsnData::Binary(op, ..)
+            | InsnData::BrIf(op, ..)
+            | InsnData::Call(op, ..)
+            | InsnData::CallClosure(op, ..)
+            | InsnData::MakeClosure(op, ..)
+            | InsnData::LoadStatic(op, ..)
+            | InsnData::Nary(op, ..)
+            | InsnData::BlockCall(op, ..) => op,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct BlockRef(pub Block, pub EntityList<Value>);
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Immediate {
+    Integer(i64),
+    Boolean(bool),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Opcode {
+    Iconst,
+    Iadd,
+    Isub,
+    Imult,
+    Idiv,
+    Imod,
+    Ishl,
+    Ishr,
+    Ior,
+    Ixor,
+    Iand,
+    Ipow,
+    Ieq,
+    Ineq,
+    Ilt,
+    Igt,
+    Ilte,
+    Igte,
+    Bconst,
+    BrIf,
+    Jmp,
+    Ret,
+    MakeClosure,
+    CallClosure,
+    Call,
+    LoadStatic,
     Unit,
 }
 
-impl<'a> FunctionCursor<'a> {
-    pub fn iconst(&mut self, i: i64) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerConst(i));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+impl fmt::Display for Opcode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Opcode::Iconst => "iconst",
+                Opcode::Iadd => "iadd",
+                Opcode::Isub => "isub",
+                Opcode::Imult => "imult",
+                Opcode::Idiv => "idiv",
+                Opcode::Imod => "imod",
+                Opcode::Ishl => "ishl",
+                Opcode::Ishr => "ishr",
+                Opcode::Ior => "ior",
+                Opcode::Ixor => "ixor",
+                Opcode::Iand => "iand",
+                Opcode::Ipow => "ipow",
+                Opcode::Ieq => "ieq",
+                Opcode::Ineq => "ineq",
+                Opcode::Ilt => "ilt",
+                Opcode::Igt => "igt",
+                Opcode::Ilte => "ilte",
+                Opcode::Igte => "igte",
+                Opcode::Bconst => "bconst",
+                Opcode::BrIf => "br_if",
+                Opcode::Jmp => "jmp",
+                Opcode::Ret => "ret",
+                Opcode::MakeClosure => "make_closure",
+                Opcode::CallClosure => "call_closure",
+                Opcode::Call => "call",
+                Opcode::LoadStatic => "load_static",
+                Opcode::Unit => "unit",
+            }
+        )
+    }
+}
+
+impl Opcode {
+    pub fn result_arity(self) -> u16 {
+        match self {
+            Opcode::Iconst
+            | Opcode::Iadd
+            | Opcode::Isub
+            | Opcode::Imult
+            | Opcode::Idiv
+            | Opcode::Imod
+            | Opcode::Ishl
+            | Opcode::Ishr
+            | Opcode::Ior
+            | Opcode::Ixor
+            | Opcode::Iand
+            | Opcode::Ipow
+            | Opcode::Ieq
+            | Opcode::Ineq
+            | Opcode::Ilt
+            | Opcode::Igt
+            | Opcode::Ilte
+            | Opcode::Igte
+            | Opcode::Bconst
+            | Opcode::MakeClosure
+            | Opcode::LoadStatic
+            | Opcode::Unit => 1,
+            Opcode::BrIf | Opcode::Jmp | Opcode::Ret => 0,
+            // TODO: n-ary function returns
+            Opcode::CallClosure | Opcode::Call => 1,
+        }
+    }
+}
+
+pub trait InsnBuilder<'a>
+where
+    Self: Sized + 'a,
+{
+    fn dfg(&self) -> &DataFlowGraph;
+    fn dfg_mut(&mut self) -> &mut DataFlowGraph;
+    fn build(self, insn: InsnData) -> (Insn, &'a mut DataFlowGraph);
+
+    // TODO: assert opcodes valid
+    fn binary_(self, opcode: Opcode, arg0: Value, arg1: Value) -> (Insn, &'a mut DataFlowGraph) {
+        self.build(InsnData::Binary(opcode, [arg0, arg1]))
+    }
+    fn nullary_(self, opcode: Opcode) -> (Insn, &'a mut DataFlowGraph) {
+        self.build(InsnData::Nullary(opcode))
+    }
+    fn unary_imm_(self, opcode: Opcode, imm: Immediate) -> (Insn, &'a mut DataFlowGraph) {
+        self.build(InsnData::UnaryImm(opcode, imm))
+    }
+    fn nary_(self, opcode: Opcode, vals: EntityList<Value>) -> (Insn, &'a mut DataFlowGraph) {
+        self.build(InsnData::Nary(opcode, vals))
+    }
+    fn block_call_(
+        self,
+        opcode: Opcode,
+        block: Block,
+        vals: EntityList<Value>,
+    ) -> (Insn, &'a mut DataFlowGraph) {
+        self.build(InsnData::BlockCall(opcode, BlockRef(block, vals)))
     }
 
-    pub fn bconst(&mut self, b: bool) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::BooleanConst(b));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn iconst(self, i: i64) -> Value {
+        let (insn, dfg) = self.unary_imm_(Opcode::Iconst, Immediate::Integer(i));
+        dfg.first_result(insn)
     }
 
-    pub fn unit(&mut self) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::Unit);
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn bconst(self, b: bool) -> Value {
+        let (insn, dfg) = self.unary_imm_(Opcode::Bconst, Immediate::Boolean(b));
+        dfg.first_result(insn)
     }
 
-    pub fn iadd(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerAdd(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn unit(self) -> Value {
+        let (insn, dfg) = self.nullary_(Opcode::Unit);
+        dfg.first_result(insn)
     }
 
-    pub fn isub(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerSub(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn iadd(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Iadd, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn imult(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerMult(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn isub(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Isub, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn idiv(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerDiv(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn imult(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Imult, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn imod(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerMod(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn idiv(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Idiv, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn ipow(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerPow(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn imod(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Imod, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn ishl(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerShl(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn ipow(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Ipow, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn ishr(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerShr(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn ishl(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Ishl, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn iand(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerAnd(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn ishr(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Ishr, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn ior(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerOr(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn iand(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Iand, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn ixor(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerXor(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn ior(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Ior, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn ieq(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerEq(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn ixor(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Ixor, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn ineq(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerNeq(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn ieq(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Ieq, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn igt(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerGt(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn ineq(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Ineq, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn ilt(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerLt(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn igt(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Igt, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn igte(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerGte(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn ilt(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Ilt, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn ilte(&mut self, lhs: Value, rhs: Value) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::IntegerLte(lhs, rhs));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn igte(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Igte, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn make_closure(&mut self, func: CoreAstId, values: &[Value]) -> Value {
-        let mut value_list = EntityList::new();
-        value_list.extend(values.iter().copied(), &mut self.func.dfg.value_pool);
-        let insn = self
-            .func
-            .dfg
-            .insns
-            .push(InsnData::MakeClosure(func, value_list));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn ilte(self, lhs: Value, rhs: Value) -> Value {
+        let (insn, dfg) = self.binary_(Opcode::Ilte, lhs, rhs);
+        dfg.first_result(insn)
     }
 
-    pub fn call_closure(&mut self, closure: Value, values: &[Value]) -> Value {
-        let mut value_list = EntityList::new();
-        value_list.extend(values.iter().copied(), &mut self.func.dfg.value_pool);
-        let insn = self
-            .func
-            .dfg
-            .insns
-            .push(InsnData::CallClosure(closure, value_list));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn make_closure(mut self, func: CoreAstId, values: &[Value]) -> Value {
+        let value_list = EntityList::from_slice(values, &mut self.dfg_mut().value_pool);
+        let (insn, dfg) = self.build(InsnData::MakeClosure(Opcode::MakeClosure, func, value_list));
+        dfg.first_result(insn)
     }
 
-    pub fn call(&mut self, func: CoreAstId, values: &[Value]) -> Value {
-        let mut value_list = EntityList::new();
-        value_list.extend(values.iter().copied(), &mut self.func.dfg.value_pool);
-        let insn = self.func.dfg.insns.push(InsnData::Call(func, value_list));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    // TODO: return arity
+    fn call_closure(mut self, closure: Value, values: &[Value]) -> Value {
+        let value_list = EntityList::from_slice(values, &mut self.dfg_mut().value_pool);
+        let (insn, dfg) = self.build(InsnData::CallClosure(
+            Opcode::CallClosure,
+            closure,
+            value_list,
+        ));
+        dfg.first_result(insn)
     }
 
-    pub fn load_static(&mut self, val: CoreAstId) -> Value {
-        let insn = self.func.dfg.insns.push(InsnData::LoadStatic(val));
-        let value = self.func.dfg.values.push(ValueData::Result(insn, 0));
-        self.func.dfg.insn_results[insn].push(value, &mut self.func.dfg.value_pool);
-        self.build_insn(insn);
-        value
+    fn call(mut self, func: CoreAstId, values: &[Value]) -> Value {
+        let value_list = EntityList::from_slice(values, &mut self.dfg_mut().value_pool);
+        let (insn, dfg) = self.build(InsnData::Call(Opcode::Call, func, value_list));
+        dfg.first_result(insn)
     }
 
-    pub fn br_if(
-        &mut self,
+    fn load_static(self, val: CoreAstId) -> Value {
+        let (insn, dfg) = self.build(InsnData::LoadStatic(Opcode::LoadStatic, val));
+        dfg.first_result(insn)
+    }
+
+    fn br_if(
+        mut self,
         cond: Value,
         then: Block,
         then_values: &[Value],
@@ -262,50 +325,70 @@ impl<'a> FunctionCursor<'a> {
         then_else_values: &[Value],
     ) -> Insn {
         let mut then_val_list = EntityList::new();
-        then_val_list.extend(then_values.iter().copied(), &mut self.func.dfg.value_pool);
+        then_val_list.extend(then_values.iter().copied(), &mut self.dfg_mut().value_pool);
         let mut then_else_val_list = EntityList::new();
         then_else_val_list.extend(
             then_else_values.iter().copied(),
-            &mut self.func.dfg.value_pool,
+            &mut self.dfg_mut().value_pool,
         );
 
-        let insn = self.func.dfg.insns.push(InsnData::BrIf(
+        let (insn, _dfg) = self.build(InsnData::BrIf(
+            Opcode::BrIf,
             cond,
-            then,
-            then_val_list,
-            then_else,
-            then_else_val_list,
+            [
+                BlockRef(then, then_val_list),
+                BlockRef(then_else, then_else_val_list),
+            ],
         ));
-        let block = self.current_block().unwrap();
-        self.func.dfg.successors[block].extend([then, then_else]);
-        self.func.dfg.predecessors[then].push(block);
-        self.func.dfg.predecessors[then_else].push(block);
-        self.build_insn(insn);
+
         insn
     }
 
-    pub fn jmp(&mut self, goto: Block, values: &[Value]) -> Insn {
-        let block = self.current_block().unwrap();
+    fn jmp(mut self, goto: Block, values: &[Value]) -> Insn {
         let mut val_list = EntityList::new();
-        val_list.extend(values.iter().copied(), &mut self.func.dfg.value_pool);
+        val_list.extend(values.iter().copied(), &mut self.dfg_mut().value_pool);
 
-        let insn = self.func.dfg.insns.push(InsnData::Jmp(goto, val_list));
-        self.func.dfg.predecessors[goto].push(block);
-        self.func.dfg.successors[block].push(goto);
-        self.build_insn(insn);
+        let (insn, _dfg) = self.block_call_(Opcode::Jmp, goto, val_list);
         insn
     }
 
-    pub fn ret(&mut self, values: &[Value]) -> Insn {
+    fn ret(mut self, values: &[Value]) -> Insn {
         let mut val_list = EntityList::new();
-        val_list.extend(values.iter().copied(), &mut self.func.dfg.value_pool);
+        val_list.extend(values.iter().copied(), &mut self.dfg_mut().value_pool);
 
-        let insn = self.func.dfg.insns.push(InsnData::Return(val_list));
-        self.build_insn(insn);
+        let (insn, _dfg) = self.nary_(Opcode::Ret, val_list);
         insn
     }
+}
 
-    fn build_insn(&mut self, insn: Insn) {
+impl<'a, 'f> InsnBuilder<'a> for &'a mut FunctionCursor<'f> {
+    fn dfg(&self) -> &DataFlowGraph {
+        &self.func.dfg
+    }
+
+    fn dfg_mut(&mut self) -> &mut DataFlowGraph {
+        &mut self.func.dfg
+    }
+
+    fn build(self, insn: InsnData) -> (Insn, &'a mut DataFlowGraph) {
+        let arity = insn.opcode().result_arity();
+        let insn = self.func.dfg.insns.push(insn);
+        // TODO
+        let results = (0..arity)
+            .map(|x| self.func.dfg.values.push(ValueData::Result(insn, x)))
+            .collect::<Vec<_>>();
+        self.func.dfg.insn_results[insn].extend(results, &mut self.func.dfg.value_pool);
+        match self.pos {
+            CursorPosition::Nowhere | CursorPosition::Before(_) => panic!("invalid position"),
+            CursorPosition::At(before) => self.func.layout.insert_insn_before(insn, before),
+            CursorPosition::After(block) => self.func.layout.append_insn(block, insn),
+        }
+        (insn, &mut self.func.dfg)
+    }
+}
+
+impl<'f> FunctionCursor<'f> {
+    pub fn insert_insn(&mut self, insn: Insn) {
         match self.pos {
             CursorPosition::Nowhere | CursorPosition::Before(_) => panic!("invalid position"),
             CursorPosition::At(before) => self.func.layout.insert_insn_before(insn, before),
@@ -313,6 +396,56 @@ impl<'a> FunctionCursor<'a> {
         }
     }
 }
+
+pub struct InstructionReplacer<'f> {
+    dfg: &'f mut DataFlowGraph,
+    insn: Insn,
+}
+
+impl<'f> InstructionReplacer<'f> {
+    pub fn new(dfg: &'f mut DataFlowGraph, insn: Insn) -> Self {
+        Self { dfg, insn }
+    }
+}
+
+impl<'f> InsnBuilder<'f> for InstructionReplacer<'f> {
+    fn dfg(&self) -> &DataFlowGraph {
+        self.dfg
+    }
+
+    fn dfg_mut(&mut self) -> &mut DataFlowGraph {
+        self.dfg
+    }
+
+    fn build(self, insn: InsnData) -> (Insn, &'f mut DataFlowGraph) {
+        {
+            // TODO: assert result arity
+            self.dfg.insns[self.insn] = insn;
+        }
+        (self.insn, self.dfg)
+    }
+}
+
+// impl<'a> FunctionCursor<'a> {
+//     pub fn remove_insn(&mut self) {
+//         match self.pos {
+//             CursorPosition::Nowhere | CursorPosition::Before(_) => panic!("invalid position"),
+//             CursorPosition::At(insn) => {
+//                 if let Some(insn_after) = self.layout().next_insn(insn) {
+//                     self.set_pos(CursorPosition::At(insn_after));
+//                 } else {
+//                     let block = self.layout().insn_block(insn).unwrap();
+//                     self.set_pos(CursorPosition::After(block));
+//                 }
+//                 self.func.layout.remove_insn(insn)
+//             }
+//             CursorPosition::After(block) => self
+//                 .func
+//                 .layout
+//                 .remove_insn(self.func.layout.last_insn(block).unwrap()),
+//         }
+//     }
+// }
 
 #[derive(Debug)]
 pub struct BlockData {
@@ -343,6 +476,8 @@ pub struct DataFlowGraph {
     pub dominators: SecondaryMap<Block, HashSet<Block>>,
     pub postdominators: SecondaryMap<Block, HashSet<Block>>,
 
+    pub dead_blocks: HashSet<Block>,
+
     pub value_pool: ListPool<Value>,
     pub values: PrimaryMap<Value, ValueData>,
 
@@ -351,12 +486,64 @@ pub struct DataFlowGraph {
 }
 
 impl Function {
-    pub fn calculate_dominators(&mut self) {
+    pub fn recalculate_cfg(&mut self) {
+        self.dfg
+            .predecessors
+            .iter_mut()
+            .for_each(|(_, x)| x.clear());
+        self.dfg.successors.iter_mut().for_each(|(_, x)| x.clear());
+        for (block, _) in &self.dfg.blocks {
+            for insn in self.layout.insns(block) {
+                match self.dfg.insns[insn] {
+                    InsnData::Nullary(_)
+                    | InsnData::Unary(..)
+                    | InsnData::UnaryImm(..)
+                    | InsnData::Binary(_, _)
+                    | InsnData::Call(..)
+                    | InsnData::CallClosure(..)
+                    | InsnData::MakeClosure(..)
+                    | InsnData::LoadStatic(..) => {}
+                    InsnData::BrIf(_, _, [then, then_else]) => {
+                        self.dfg.successors[block].push(then.0);
+                        self.dfg.successors[block].push(then_else.0);
+                        self.dfg.predecessors[then.0].push(block);
+                        self.dfg.predecessors[then_else.0].push(block);
+                    }
+                    InsnData::Nary(Opcode::Ret, _) => {}
+                    InsnData::BlockCall(Opcode::Jmp, goto) => {
+                        self.dfg.successors[block].push(goto.0);
+                        self.dfg.predecessors[goto.0].push(block);
+                    }
+                    _ => unimplemented!(),
+                }
+            }
+        }
+    }
+
+    /// N.B. [`Self::recalculate_cfg`] must be called before this
+    /// function, if the CFG has not been calculated yet or has been
+    /// invalidated.
+    pub fn recalculate_dominators(&mut self) {
         let entry = self.layout.entry_block().unwrap();
 
         for (block, _) in &self.dfg.blocks {
-            self.dfg.dominators[block] = self.dfg.blocks.keys().collect();
-            self.dfg.postdominators[block] = self.dfg.blocks.keys().collect();
+            //if !self.dfg.predecessors[block].is_empty() {
+            self.dfg.dominators[block] = self
+                .dfg
+                .blocks
+                .keys()
+                //.filter(|x| !self.dfg.predecessors[*x].is_empty())
+                .collect();
+            self.dfg.postdominators[block] = self
+                .dfg
+                .blocks
+                .keys()
+                //.filter(|x| !self.dfg.predecessors[*x].is_empty())
+                .collect();
+            //} else {
+            //    self.dfg.dominators[block] = [block].into_iter().collect();
+            //    self.dfg.postdominators[block] = [block].into_iter().collect();
+            //}
         }
 
         let mut worklist = vec![entry];
@@ -538,6 +725,26 @@ impl Layout {
         }
     }
 
+    pub fn remove_insn(&mut self, insn: Insn) {
+        let block = self.insn_block(insn).unwrap();
+        let next = self.insn_layout[insn].next;
+        let prev = self.insn_layout[insn].prev;
+        {
+            let node = &mut self.insn_layout[insn];
+            node.block = None.into();
+            node.next = None.into();
+            node.prev = None.into();
+        }
+        match next.expand() {
+            None => self.block_layout[block].last_insn = prev,
+            Some(next) => self.insn_layout[next].prev = prev,
+        }
+        match prev.expand() {
+            None => self.block_layout[block].first_insn = next,
+            Some(prev) => self.insn_layout[prev].next = next,
+        }
+    }
+
     pub fn entry_block(&self) -> Option<Block> {
         self.first_block
     }
@@ -659,6 +866,12 @@ impl DataFlowGraph {
         self.insns.clear();
         self.insn_results.clear();
     }
+
+    pub fn first_result(&self, insn: Insn) -> Value {
+        self.insn_results[insn]
+            .get(0, &self.value_pool)
+            .expect("Insn result")
+    }
 }
 
 #[derive(Debug)]
@@ -722,42 +935,32 @@ impl Function {
             let mut found_branch = 0;
             for insn in self.layout.insns(block) {
                 match self.dfg.insns[insn] {
-                    InsnData::IntegerConst(_)
-                    | InsnData::BooleanConst(_)
-                    | InsnData::Unit
-                    | InsnData::LoadStatic(..) => {}
-                    InsnData::IntegerAdd(a, b)
-                    | InsnData::IntegerMult(a, b)
-                    | InsnData::IntegerSub(a, b)
-                    | InsnData::IntegerDiv(a, b)
-                    | InsnData::IntegerMod(a, b)
-                    | InsnData::IntegerPow(a, b)
-                    | InsnData::IntegerShl(a, b)
-                    | InsnData::IntegerShr(a, b)
-                    | InsnData::IntegerAnd(a, b)
-                    | InsnData::IntegerOr(a, b)
-                    | InsnData::IntegerXor(a, b)
-                    | InsnData::IntegerEq(a, b)
-                    | InsnData::IntegerNeq(a, b)
-                    | InsnData::IntegerGt(a, b)
-                    | InsnData::IntegerLt(a, b)
-                    | InsnData::IntegerLte(a, b)
-                    | InsnData::IntegerGte(a, b) => {
+                    InsnData::Unary(_, val) => self.assert_value_valid(block, val),
+                    InsnData::Binary(_, [a, b]) => {
                         self.assert_value_valid(block, a);
                         self.assert_value_valid(block, b);
                     }
-                    InsnData::MakeClosure(_, vs) | InsnData::Call(_, vs) => {
+                    InsnData::BlockCall(_, BlockRef(_, vals))
+                    | InsnData::Nary(Opcode::Ret, vals) => {
+                        found_branch += 1;
+                        for val in vals.as_slice(&self.dfg.value_pool) {
+                            self.assert_value_valid(block, *val);
+                        }
+                    }
+                    InsnData::Nary(_, vs)
+                    | InsnData::MakeClosure(_, _, vs)
+                    | InsnData::Call(_, _, vs) => {
                         for v in vs.as_slice(&self.dfg.value_pool) {
                             self.assert_value_valid(block, *v);
                         }
                     }
-                    InsnData::CallClosure(v, vs) => {
+                    InsnData::CallClosure(_, v, vs) => {
                         self.assert_value_valid(block, v);
                         for v in vs.as_slice(&self.dfg.value_pool) {
                             self.assert_value_valid(block, *v);
                         }
                     }
-                    InsnData::BrIf(cond, _, then_vs, _, else_vs) => {
+                    InsnData::BrIf(_, cond, [BlockRef(_, then_vs), BlockRef(_, else_vs)]) => {
                         found_branch += 1;
 
                         self.assert_value_valid(block, cond);
@@ -768,13 +971,7 @@ impl Function {
                             self.assert_value_valid(block, *v);
                         }
                     }
-                    InsnData::Jmp(_, vs) | InsnData::Return(vs) => {
-                        found_branch += 1;
-
-                        for v in vs.as_slice(&self.dfg.value_pool) {
-                            self.assert_value_valid(block, *v);
-                        }
-                    }
+                    InsnData::UnaryImm(..) | InsnData::Nullary(..) | InsnData::LoadStatic(..) => {}
                 }
             }
             assert!(
@@ -844,79 +1041,56 @@ impl Function {
                     print!("    ");
                 }
                 match data {
-                    InsnData::Unit => println!("unit"),
-                    InsnData::IntegerConst(v) => println!("iconst {v}"),
-                    InsnData::IntegerAdd(a, b) => println!("iadd %{}, %{}", a.as_u32(), b.as_u32()),
-                    InsnData::IntegerMult(a, b) => {
-                        println!("imult %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerSub(a, b) => {
-                        println!("isub %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerDiv(a, b) => {
-                        println!("idiv %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerMod(a, b) => {
-                        println!("imod %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerPow(a, b) => {
-                        println!("ipow %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerShl(a, b) => {
-                        println!("ishl %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerShr(a, b) => {
-                        println!("ishr %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerAnd(a, b) => {
-                        println!("iand %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerOr(a, b) => {
-                        println!("ior %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerXor(a, b) => {
-                        println!("ixor %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerEq(a, b) => {
-                        println!("ieq %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerNeq(a, b) => {
-                        println!("ineq %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerGt(a, b) => {
-                        println!("igt %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerLt(a, b) => {
-                        println!("ilt %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerLte(a, b) => {
-                        println!("ilte %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::IntegerGte(a, b) => {
-                        println!("igte %{}, %{}", a.as_u32(), b.as_u32())
-                    }
-                    InsnData::BooleanConst(b) => println!("bconst {b}"),
-                    InsnData::BrIf(c, b1, b1_vals, b2, b2_vals) => println!(
-                        "br_if %{}, {}{}, {}{}",
-                        c.as_u32(),
-                        b1.pretty_name(self).pretty(80),
-                        b1.pretty_params(self, b1_vals.as_slice(&self.dfg.value_pool))
+                    InsnData::Nullary(op) => println!("{}", op),
+                    InsnData::Unary(op, val) => println!("{} {}", op, val.pretty(self).pretty(80)),
+                    InsnData::UnaryImm(op, Immediate::Boolean(b)) => println!("{op} {b}"),
+                    InsnData::UnaryImm(op, Immediate::Integer(i)) => println!("{op} {i}"),
+                    InsnData::Binary(op, [a, b]) => println!(
+                        "{} {}, {}",
+                        op,
+                        a.pretty(self).pretty(80),
+                        b.pretty(self).pretty(80)
+                    ),
+                    InsnData::BrIf(op, cond, [then, then_else]) => println!(
+                        "{op} {}, {}{}, {}{}",
+                        cond.pretty(self).pretty(80),
+                        then.0.pretty_name(self).pretty(80),
+                        then.0
+                            .pretty_params(self, then.1.as_slice(&self.dfg.value_pool))
                             .pretty(80),
-                        b2.pretty_name(self).pretty(80),
-                        b2.pretty_params(self, b2_vals.as_slice(&self.dfg.value_pool))
+                        then_else.0.pretty_name(self).pretty(80),
+                        then_else
+                            .0
+                            .pretty_params(self, then_else.1.as_slice(&self.dfg.value_pool))
                             .pretty(80),
                     ),
-                    InsnData::Jmp(b, vals) => {
+                    InsnData::Call(op, id, vals) | InsnData::MakeClosure(op, id, vals) => println!(
+                        "{op} <id>({})",
+                        RcAllocator
+                            .intersperse(
+                                vals.as_slice(&self.dfg.value_pool)
+                                    .iter()
+                                    .map(|x| x.pretty(self)),
+                                RcDoc::text(", ")
+                            )
+                            .pretty(80)
+                    ),
+                    InsnData::CallClosure(op, closure, vals) => println!(
+                        "{op} {}({})",
+                        closure.pretty(self).pretty(80),
+                        RcAllocator
+                            .intersperse(
+                                vals.as_slice(&self.dfg.value_pool)
+                                    .iter()
+                                    .map(|x| x.pretty(self)),
+                                RcDoc::text(", ")
+                            )
+                            .pretty(80)
+                    ),
+                    InsnData::LoadStatic(op, id) => println!("{op} <id>"),
+                    InsnData::Nary(op, vals) => {
                         println!(
-                            "jmp {}{}",
-                            b.pretty_name(self).pretty(80),
-                            b.pretty_params(self, vals.as_slice(&self.dfg.value_pool))
-                                .pretty(80),
-                        )
-                    }
-                    InsnData::Return(vals) => {
-                        println!(
-                            "return {}",
+                            "{op} {}",
                             RcAllocator
                                 .intersperse(
                                     vals.as_slice(&self.dfg.value_pool)
@@ -925,43 +1099,72 @@ impl Function {
                                     RcDoc::text(", ")
                                 )
                                 .pretty(80)
-                        );
+                        )
                     }
-                    InsnData::MakeClosure(f, vals) => println!(
-                        "make_closure <{f}>({})",
-                        RcAllocator
-                            .intersperse(
-                                vals.as_slice(&self.dfg.value_pool)
-                                    .iter()
-                                    .map(|x| x.pretty(self)),
-                                RcDoc::text(", ")
-                            )
+                    InsnData::BlockCall(op, block) => println!(
+                        "{op} {}{}",
+                        block.0.pretty_name(self).pretty(80),
+                        block
+                            .0
+                            .pretty_params(self, block.1.as_slice(&self.dfg.value_pool))
                             .pretty(80)
                     ),
-                    InsnData::CallClosure(f, vals) => println!(
-                        "call_closure {}({})",
-                        f.pretty(self).pretty(80),
-                        RcAllocator
-                            .intersperse(
-                                vals.as_slice(&self.dfg.value_pool)
-                                    .iter()
-                                    .map(|x| x.pretty(self)),
-                                RcDoc::text(", ")
-                            )
-                            .pretty(80)
-                    ),
-                    InsnData::Call(f, vals) => println!(
-                        "call <{f}>({})",
-                        RcAllocator
-                            .intersperse(
-                                vals.as_slice(&self.dfg.value_pool)
-                                    .iter()
-                                    .map(|x| x.pretty(self)),
-                                RcDoc::text(", ")
-                            )
-                            .pretty(80)
-                    ),
-                    InsnData::LoadStatic(f) => println!("load_static <{f}>"),
+                    // InsnData::Jmp(b, vals) => {
+                    //     println!(
+                    //         "jmp {}{}",
+                    //         b.pretty_name(self).pretty(80),
+                    //         b.pretty_params(self, vals.as_slice(&self.dfg.value_pool))
+                    //             .pretty(80),
+                    //     )
+                    // }
+                    // InsnData::Return(vals) => {
+                    //     println!(
+                    //         "return {}",
+                    //         RcAllocator
+                    //             .intersperse(
+                    //                 vals.as_slice(&self.dfg.value_pool)
+                    //                     .iter()
+                    //                     .map(|x| x.pretty(self)),
+                    //                 RcDoc::text(", ")
+                    //             )
+                    //             .pretty(80)
+                    //     );
+                    // }
+                    // InsnData::MakeClosure(f, vals) => println!(
+                    //     "make_closure <{f}>({})",
+                    //     RcAllocator
+                    //         .intersperse(
+                    //             vals.as_slice(&self.dfg.value_pool)
+                    //                 .iter()
+                    //                 .map(|x| x.pretty(self)),
+                    //             RcDoc::text(", ")
+                    //         )
+                    //         .pretty(80)
+                    // ),
+                    // InsnData::CallClosure(f, vals) => println!(
+                    //     "call_closure {}({})",
+                    //     f.pretty(self).pretty(80),
+                    //     RcAllocator
+                    //         .intersperse(
+                    //             vals.as_slice(&self.dfg.value_pool)
+                    //                 .iter()
+                    //                 .map(|x| x.pretty(self)),
+                    //             RcDoc::text(", ")
+                    //         )
+                    //         .pretty(80)
+                    // ),
+                    // InsnData::Call(f, vals) => println!(
+                    //     "call <{f}>({})",
+                    //     RcAllocator
+                    //         .intersperse(
+                    //             vals.as_slice(&self.dfg.value_pool)
+                    //                 .iter()
+                    //                 .map(|x| x.pretty(self)),
+                    //             RcDoc::text(", ")
+                    //         )
+                    //         .pretty(80)
+                    // ),
+                    // InsnData::LoadStatic(f) => println!("load_static <{f}>"),
                 }
             }
         }
@@ -980,6 +1183,22 @@ impl<'a> FunctionCursor<'a> {
             func,
             pos: CursorPosition::Nowhere,
         }
+    }
+
+    pub fn layout(&self) -> &Layout {
+        &self.func.layout
+    }
+
+    pub fn layout_mut(&mut self) -> &mut Layout {
+        &mut self.func.layout
+    }
+
+    pub fn dfg(&self) -> &DataFlowGraph {
+        &self.func.dfg
+    }
+
+    pub fn dfg_mut(&mut self) -> &mut DataFlowGraph {
+        &mut self.func.dfg
     }
 
     pub fn pos(&self) -> CursorPosition {
@@ -1021,6 +1240,10 @@ impl<'a> FunctionCursor<'a> {
 
     pub fn goto_insn(&mut self, insn: Insn) {
         self.set_pos(CursorPosition::At(insn));
+    }
+
+    pub fn goto_block(&mut self, block: Block) {
+        self.set_pos(CursorPosition::Before(block));
     }
 
     pub fn next_block(&mut self) -> Option<Block> {
@@ -1082,6 +1305,32 @@ impl<'a> FunctionCursor<'a> {
                 if let Some(next) = self.func.layout.first_insn(block) {
                     self.set_pos(CursorPosition::At(next));
                     Some(next)
+                } else {
+                    self.set_pos(CursorPosition::After(block));
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn prev_insn(&mut self) -> Option<Insn> {
+        match self.pos() {
+            CursorPosition::Nowhere | CursorPosition::Before(..) => None,
+            CursorPosition::At(insn) => {
+                if let Some(prev) = self.func.layout.prev_insn(insn) {
+                    self.set_pos(CursorPosition::At(prev));
+                    Some(prev)
+                } else {
+                    self.set_pos(CursorPosition::Before(
+                        self.func.layout.insn_block(insn).unwrap(),
+                    ));
+                    None
+                }
+            }
+            CursorPosition::After(block) => {
+                if let Some(last) = self.func.layout.last_insn(block) {
+                    self.set_pos(CursorPosition::At(last));
+                    Some(last)
                 } else {
                     self.set_pos(CursorPosition::After(block));
                     None
