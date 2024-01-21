@@ -185,42 +185,63 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
                 )),
                 func,
             );
+            func.pretty();
+            println!("== SCCP ==");
             codegen::constant_prop::run(func);
             func.pretty();
             func.recalculate_cfg();
             func.recalculate_dominators();
             func.assert_valid();
-            println!("== Dominators: ==");
-            for (block, val) in func.dfg.dominators.iter() {
-                println!(
-                    "{}: {}",
-                    block.pretty(func).pretty(80),
-                    RcAllocator
-                        .intersperse(
-                            val.iter()
-                                .sorted_by_key(|x| x.as_u32())
-                                .map(|x| x.pretty(func)),
-                            RcDoc::text(",").append(RcDoc::space())
-                        )
-                        .pretty(80),
-                );
-            }
-            println!("== Postdominators: ==");
-            for (block, val) in func.dfg.postdominators.iter() {
-                println!(
-                    "{}: {}",
-                    block.pretty(func).pretty(80),
-                    RcAllocator
-                        .intersperse(
-                            val.iter()
-                                .sorted_by_key(|x| x.as_u32())
-                                .map(|x| x.pretty(func)),
-                            RcDoc::text(",").append(RcDoc::space())
-                        )
-                        .pretty(80),
-                );
-            }
-            println!();
+            codegen::dead_code::run(func);
+            println!("== DCE ==");
+            func.pretty();
+            func.recalculate_cfg();
+            func.recalculate_dominators();
+            func.assert_valid();
+            println!("== SCCP ==");
+            codegen::constant_prop::run(func);
+            func.pretty();
+            func.recalculate_cfg();
+            func.recalculate_dominators();
+            func.assert_valid();
+            codegen::dead_code::run(func);
+            println!("== DCE ==");
+            func.pretty();
+            func.recalculate_cfg();
+            func.recalculate_dominators();
+            func.assert_valid();
+
+            //     println!("== Dominators: ==");
+            //     for (block, val) in func.dfg.dominators.iter() {
+            //         println!(
+            //             "{}: {}",
+            //             block.pretty(func).pretty(80),
+            //             RcAllocator
+            //                 .intersperse(
+            //                     val.iter()
+            //                         .sorted_by_key(|x| x.as_u32())
+            //                         .map(|x| x.pretty(func)),
+            //                     RcDoc::text(",").append(RcDoc::space())
+            //                 )
+            //                 .pretty(80),
+            //         );
+            //     }
+            //     println!("== Postdominators: ==");
+            //     for (block, val) in func.dfg.postdominators.iter() {
+            //         println!(
+            //             "{}: {}",
+            //             block.pretty(func).pretty(80),
+            //             RcAllocator
+            //                 .intersperse(
+            //                     val.iter()
+            //                         .sorted_by_key(|x| x.as_u32())
+            //                         .map(|x| x.pretty(func)),
+            //                     RcDoc::text(",").append(RcDoc::space())
+            //                 )
+            //                 .pretty(80),
+            //         );
+            //     }
+            //     println!();
         }
         // let expr = eval::eval_expr(gcx, &mut ecx, im::Vector::new(), main);
         // let expr = eval::force_barrier(&mut ecx, expr);

@@ -45,6 +45,7 @@
 # def g : forall 'a. 'a -> ('a, Integer)
 #       = \x.(x, f g)
 
+#def main : Integer = 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10
 def main : Boolean -> Integer = \x.(if x then 1 + 1 else 1 * 2)
 # def fact : Integer -> Integer = λn.if n == 0 then 1 else n * fact (n - 1)
 # def main : _ = (\x y.(if x then (\z.z + y + 5) else (\z.z)) (fact 5) + 1) true foo

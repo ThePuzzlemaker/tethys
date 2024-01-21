@@ -1,0 +1,11 @@
+image: alpine/edge
+secrets:
+  - e020de33-eb67-40d4-b09c-147ddf4d0c8e
+sources:
+  - git+ssh://git@git.sr.ht/~thepuzzlemaker/tethys
+tasks:
+  - mirror: |
+      cd tethys
+      git remote add github git@github.com:ThePuzzlemaker/tethys.git
+      ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
+      git push github main

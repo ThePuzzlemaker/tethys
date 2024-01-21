@@ -16,6 +16,7 @@ use self::ssa::{Block, CursorPosition, Function, FunctionCursor, InsnBuilder, Va
 
 pub mod closure;
 pub mod constant_prop;
+pub mod dead_code;
 pub mod ssa;
 
 #[derive(Debug)]

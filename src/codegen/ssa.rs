@@ -492,7 +492,7 @@ impl Function {
             .iter_mut()
             .for_each(|(_, x)| x.clear());
         self.dfg.successors.iter_mut().for_each(|(_, x)| x.clear());
-        for (block, _) in &self.dfg.blocks {
+        for block in self.layout.blocks() {
             for insn in self.layout.insns(block) {
                 match self.dfg.insns[insn] {
                     InsnData::Nullary(_)
@@ -526,24 +526,9 @@ impl Function {
     pub fn recalculate_dominators(&mut self) {
         let entry = self.layout.entry_block().unwrap();
 
-        for (block, _) in &self.dfg.blocks {
-            //if !self.dfg.predecessors[block].is_empty() {
-            self.dfg.dominators[block] = self
-                .dfg
-                .blocks
-                .keys()
-                //.filter(|x| !self.dfg.predecessors[*x].is_empty())
-                .collect();
-            self.dfg.postdominators[block] = self
-                .dfg
-                .blocks
-                .keys()
-                //.filter(|x| !self.dfg.predecessors[*x].is_empty())
-                .collect();
-            //} else {
-            //    self.dfg.dominators[block] = [block].into_iter().collect();
-            //    self.dfg.postdominators[block] = [block].into_iter().collect();
-            //}
+        for block in self.layout.blocks() {
+            self.dfg.dominators[block] = self.layout.blocks().collect();
+            self.dfg.postdominators[block] = self.layout.blocks().collect();
         }
 
         let mut worklist = vec![entry];
@@ -745,6 +730,24 @@ impl Layout {
         }
     }
 
+    pub fn remove_block(&mut self, block: Block) {
+        let next = self.block_layout[block].next;
+        let prev = self.block_layout[block].prev;
+        {
+            let node = &mut self.block_layout[block];
+            node.next = None.into();
+            node.prev = None.into();
+        }
+        match next.expand() {
+            None => self.last_block = prev.expand(),
+            Some(next) => self.block_layout[next].prev = prev,
+        }
+        match prev.expand() {
+            None => self.first_block = next.expand(),
+            Some(prev) => self.block_layout[prev].next = next,
+        }
+    }
+
     pub fn entry_block(&self) -> Option<Block> {
         self.first_block
     }
@@ -931,7 +934,7 @@ impl Function {
 
     pub fn assert_valid(&self) {
         let _entry = self.layout.entry_block().expect("Function had entry block");
-        for (block, _) in &self.dfg.blocks {
+        for block in self.layout.blocks() {
             let mut found_branch = 0;
             for insn in self.layout.insns(block) {
                 match self.dfg.insns[insn] {
@@ -1065,7 +1068,7 @@ impl Function {
                             .pretty(80),
                     ),
                     InsnData::Call(op, id, vals) | InsnData::MakeClosure(op, id, vals) => println!(
-                        "{op} <id>({})",
+                        "{op} <{id}>({})",
                         RcAllocator
                             .intersperse(
                                 vals.as_slice(&self.dfg.value_pool)
@@ -1087,7 +1090,7 @@ impl Function {
                             )
                             .pretty(80)
                     ),
-                    InsnData::LoadStatic(op, id) => println!("{op} <id>"),
+                    InsnData::LoadStatic(op, id) => println!("{op} <{id}>"),
                     InsnData::Nary(op, vals) => {
                         println!(
                             "{op} {}",
