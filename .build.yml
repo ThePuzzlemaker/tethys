@@ -8,4 +8,4 @@ tasks:
       cd tethys
       git remote add github git@github.com:ThePuzzlemaker/tethys.git
       ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
-      git push github main
+      git push --all github
