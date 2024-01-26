@@ -93,6 +93,7 @@ fn convert(
                     gcx.arenas.core.next_id(),
                     ExprKind::LiftedFree(DeBruijnLvl::from(scope.free.len() - 1)),
                     sp,
+                    None,
                 )
             } else {
                 Expr::new(
@@ -100,6 +101,7 @@ fn convert(
                     gcx.arenas.core.next_id(),
                     ExprKind::LiftedVar(DeBruijnIdx::from(ix.index())),
                     sp,
+                    None,
                 )
             }
         }
@@ -142,6 +144,7 @@ fn convert(
                     res,
                 ),
                 sp,
+                None,
             );
             if mode != Mode::Root {
                 ctx.lifted.push(res);
@@ -189,6 +192,7 @@ fn convert(
                             free_ix.unwrap() - free_scope.unwrap().offset,
                         )),
                         sp,
+                        None,
                     )
                 })
                 .collect::<im::Vector<_>>();
@@ -201,6 +205,7 @@ fn convert(
                     gcx.arenas.core.next_id(),
                     ExprKind::LiftedApp(res, xs),
                     sp,
+                    None,
                 )
             };
 
@@ -213,7 +218,13 @@ fn convert(
         ExprKind::App(f, x) => {
             let f = convert(gcx, ctx, f, scope_ix, Mode::Traverse);
             let x = convert(gcx, ctx, x, scope_ix, Mode::Traverse);
-            Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::App(f, x), sp)
+            Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                ExprKind::App(f, x),
+                sp,
+                None,
+            )
         }
         ExprKind::TyApp(e, _) | ExprKind::TyAbs(_, _, e) => {
             convert(gcx, ctx, e, scope_ix, Mode::Traverse)
@@ -224,10 +235,17 @@ fn convert(
                 gcx,
                 gcx.arenas.core.next_id(),
                 ExprKind::App(
-                    Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Lam(x, i, e2), sp),
+                    Expr::new(
+                        gcx,
+                        gcx.arenas.core.next_id(),
+                        ExprKind::Lam(x, i, e2),
+                        sp,
+                        None,
+                    ),
                     e1,
                 ),
                 sp,
+                None,
             );
             convert(gcx, ctx, e2, scope_ix, Mode::Traverse)
         }
@@ -239,6 +257,7 @@ fn convert(
                 gcx.arenas.core.next_id(),
                 ExprKind::BinaryOp { left, kind, right },
                 sp,
+                None,
             )
         }
         ExprKind::If(cond, then, then_else) => {
@@ -250,6 +269,7 @@ fn convert(
                 gcx.arenas.core.next_id(),
                 ExprKind::If(cond, then, then_else),
                 sp,
+                None,
             )
         }
         ExprKind::Tuple(v) => Expr::new(
@@ -261,6 +281,7 @@ fn convert(
                     .collect(),
             ),
             sp,
+            None,
         ),
         ExprKind::TupleProj(x, n) => {
             let x = convert(gcx, ctx, x, scope_ix, Mode::Traverse);
@@ -269,6 +290,7 @@ fn convert(
                 gcx.arenas.core.next_id(),
                 ExprKind::TupleProj(x, n),
                 sp,
+                None,
             )
         }
         // Free with respect to the global context. These are

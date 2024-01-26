@@ -429,14 +429,27 @@ pub fn quote_expr(
 ) -> Id<Expr> {
     let sp = Span((u32::MAX..u32::MAX).into());
     match &*expr {
-        VExpr::Unit => Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Unit, sp),
-        VExpr::Number(v) => Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Number(*v), sp),
-        VExpr::Boolean(b) => Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Boolean(*b), sp),
+        VExpr::Unit => Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Unit, sp, None),
+        VExpr::Number(v) => Expr::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            ExprKind::Number(*v),
+            sp,
+            None,
+        ),
+        VExpr::Boolean(b) => Expr::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            ExprKind::Boolean(*b),
+            sp,
+            None,
+        ),
         VExpr::Var(id, lvl) => Expr::new(
             gcx,
             gcx.arenas.core.next_id(),
             ExprKind::Var(*id, lvl2ix(l, *lvl)),
             sp,
+            None,
         ),
         VExpr::Lam(x, i, b) => {
             // TODO: make a subst function so this doesn't eval further than necessary
@@ -448,12 +461,19 @@ pub fn quote_expr(
                 gcx.arenas.core.next_id(),
                 ExprKind::Lam(*x, *i, quote_expr(gcx, ecx, l + 1, b)),
                 sp,
+                None,
             )
         }
         VExpr::App(f, x) => {
             let f = quote_expr(gcx, ecx, l, f.clone());
             let x = quote_expr(gcx, ecx, l, x.clone());
-            Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::App(f, x), sp)
+            Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                ExprKind::App(f, x),
+                sp,
+                None,
+            )
         }
         VExpr::EnumConstructor {
             id, branch, vector, ..
@@ -464,6 +484,7 @@ pub fn quote_expr(
                 gcx.arenas.core.next_id(),
                 ExprKind::EnumConstructor(*id, *branch),
                 sp,
+                None,
             ),
             |acc, x| {
                 Expr::new(
@@ -471,6 +492,7 @@ pub fn quote_expr(
                     gcx.arenas.core.next_id(),
                     ExprKind::App(acc, quote_expr(gcx, ecx, l, x)),
                     sp,
+                    None,
                 )
             },
         ),
@@ -479,6 +501,7 @@ pub fn quote_expr(
             gcx.arenas.core.next_id(),
             ExprKind::EnumRecursor(*id),
             sp,
+            None,
         ),
         VExpr::EnumRecursorEval {
             id, original_spine, ..
@@ -488,6 +511,7 @@ pub fn quote_expr(
                 gcx.arenas.core.next_id(),
                 ExprKind::EnumRecursor(*id),
                 sp,
+                None,
             ),
             |acc, x| {
                 Expr::new(
@@ -495,13 +519,26 @@ pub fn quote_expr(
                     gcx.arenas.core.next_id(),
                     ExprKind::App(acc, quote_expr(gcx, ecx, l, x)),
                     sp,
+                    None,
                 )
             },
         ),
-        VExpr::Free(id) => Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Free(*id), sp),
+        VExpr::Free(id) => Expr::new(
+            gcx,
+            gcx.arenas.core.next_id(),
+            ExprKind::Free(*id),
+            sp,
+            None,
+        ),
         VExpr::RecursionBarrier(id, v) => {
             let _ = v.upgrade().unwrap();
-            Expr::new(gcx, gcx.arenas.core.next_id(), ExprKind::Free(*id), sp)
+            Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                ExprKind::Free(*id),
+                sp,
+                None,
+            )
         }
         VExpr::BinaryOp { left, kind, right } => {
             let left = quote_expr(gcx, ecx, l, left.clone());
@@ -515,6 +552,7 @@ pub fn quote_expr(
                     right,
                 },
                 sp,
+                None,
             )
         }
         VExpr::BinaryOpThunk { left, kind, right } => {
@@ -528,6 +566,7 @@ pub fn quote_expr(
                     right: *right,
                 },
                 sp,
+                None,
             )
         }
         VExpr::IfThunk(cond, then, then_else) => {
@@ -537,6 +576,7 @@ pub fn quote_expr(
                 gcx.arenas.core.next_id(),
                 ExprKind::If(cond, *then, *then_else),
                 sp,
+                None,
             )
         }
         VExpr::Tuple(spine) => Expr::new(
@@ -549,12 +589,14 @@ pub fn quote_expr(
                     .collect(),
             ),
             sp,
+            None,
         ),
         VExpr::TupleProj(expr, ix) => Expr::new(
             gcx,
             gcx.arenas.core.next_id(),
             ExprKind::TupleProj(quote_expr(gcx, ecx, l, expr.clone()), *ix),
             sp,
+            None,
         ),
     }
 }

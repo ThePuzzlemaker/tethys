@@ -100,16 +100,6 @@ pub fn surf_ty_to_core(
     mut tcx: TypeckCtxt,
     t: Id<surf::Ty>,
 ) -> Result<Id<ast::Ty>, ElabError> {
-    // {
-    //     let mut w = Vec::new();
-    //     let doc = crate::ast::pretty::pp_ty(0, gcx, t);
-    //     doc.render(80, &mut w).unwrap();
-    //     println!(
-    //         "\n{tcx:?}\nsurf_ty_to_core {}",
-    //         String::from_utf8(w).unwrap()
-    //     );
-    // }
-
     use ast::TyKind as CT;
     use surf::TyKind as ST;
     let t = gcx.arenas.ast.ty(t);
@@ -771,14 +761,20 @@ pub fn check(
                 VTy::rigid(gcx, gcx.arenas.core.next_id(), x, tcx.lvl),
             );
             let e1 = check(gcx, tcx.bind_ty(gcx, x), ie, a, type_expectation)?;
-            ast::Expr::new(gcx, gcx.arenas.core.next_id(), CE::TyAbs(x, i, e1), e.span)
+            ast::Expr::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                CE::TyAbs(x, i, e1),
+                e.span,
+                Some(it),
+            )
         }
 
         (SE::Lambda(i, e1), VT::Arrow(a, b)) => {
             let cid = gcx.arenas.core.lower_id(e.id);
 
             let e1 = check(gcx, tcx.bind_val(cid, a), e1, b, type_expectation)?;
-            ast::Expr::new(gcx, cid, CE::Lam(cid, i, e1), e.span)
+            ast::Expr::new(gcx, cid, CE::Lam(cid, i, e1), e.span, Some(it))
         }
         (SE::Let(i, Recursive::NotRecursive, None, e1, e2), _) => {
             let (e1, vt_e1) = infer(gcx, tcx.clone(), e1)?;
@@ -793,7 +789,7 @@ pub fn check(
             )?;
             let t_e1 = quote_ty(gcx, tcx.lvl, vt_e1);
 
-            ast::Expr::new(gcx, cid, CE::Let(cid, i, t_e1, e1, e2), e.span)
+            ast::Expr::new(gcx, cid, CE::Let(cid, i, t_e1, e1, e2), e.span, Some(it))
         }
         (SE::Let(i, Recursive::NotRecursive, Some(t_e1), e1, e2), _) => {
             let t_e1 = surf_ty_to_core(gcx, tcx.clone(), t_e1)?;
@@ -815,7 +811,7 @@ pub fn check(
                 type_expectation,
             )?;
 
-            ast::Expr::new(gcx, cid, CE::Let(cid, i, t_e1, e1, e2), e.span)
+            ast::Expr::new(gcx, cid, CE::Let(cid, i, t_e1, e1, e2), e.span, Some(it))
         }
 
         (SE::TupleProj(expr, ix), _) => {
@@ -869,6 +865,7 @@ pub fn check(
                 gcx.arenas.core.lower_id(e.id),
                 CE::TupleProj(expr, ix),
                 e.span,
+                Some(it),
             )
         }
         (_, _) => {
@@ -909,10 +906,19 @@ pub fn infer(
     use VTyKind as VT;
     let e = gcx.arenas.ast.expr(ie);
     Ok(match e.kind {
-        SE::Unit => (
-            ast::Expr::new(gcx, gcx.arenas.core.lower_id(e.id), CE::Unit, e.span),
-            VTy::new(gcx, gcx.arenas.core.next_id(), VT::Unit, e.span),
-        ),
+        SE::Unit => {
+            let t = VTy::new(gcx, gcx.arenas.core.next_id(), VT::Unit, e.span);
+            (
+                ast::Expr::new(
+                    gcx,
+                    gcx.arenas.core.lower_id(e.id),
+                    CE::Unit,
+                    e.span,
+                    Some(t),
+                ),
+                t,
+            )
+        }
         SE::Name(Ident { symbol, span }) => {
             if symbol.as_str() == "_" {
                 let ma = fresh_meta(
@@ -923,15 +929,16 @@ pub fn infer(
                     e.span,
                     Span((u32::MAX..u32::MAX).into()),
                 );
-
+                let t = eval_ty(gcx, tcx.env.clone(), ma);
                 return Ok((
                     ast::Expr::new(
                         gcx,
                         gcx.arenas.core.lower_id(e.id),
-                        CE::Err(ExprDeferredError::Discarded(ma, tcx.clone())),
+                        CE::Err(ExprDeferredError::Discarded(ma, tcx)),
                         Span(span),
+                        Some(t),
                     ),
-                    eval_ty(gcx, tcx.env, ma),
+                    t,
                 ));
             }
 
@@ -1016,6 +1023,7 @@ pub fn infer(
                             gcx.arenas.core.next_id(),
                             CE::EnumConstructor(*id, *branch),
                             e.span,
+                            Some(t),
                         ),
                         t,
                     )
@@ -1130,24 +1138,26 @@ pub fn infer(
                         dummy_span,
                     );
 
+                    let t = eval_ty(
+                        gcx,
+                        im::Vector::new(),
+                        syn_ids
+                            .iter()
+                            .copied()
+                            .zip(generics.iter().rev().copied())
+                            .rfold(t, |acc, (x, i)| {
+                                ast::Ty::new(gcx, x, CT::Forall(x, i, acc), dummy_span)
+                            }),
+                    );
                     (
                         ast::Expr::new(
                             gcx,
                             gcx.arenas.core.lower_id(e.id),
                             CE::EnumRecursor(id),
                             e.span,
+                            Some(t),
                         ),
-                        eval_ty(
-                            gcx,
-                            im::Vector::new(),
-                            syn_ids
-                                .iter()
-                                .copied()
-                                .zip(generics.iter().rev().copied())
-                                .rfold(t, |acc, (x, i)| {
-                                    ast::Ty::new(gcx, x, CT::Forall(x, i, acc), dummy_span)
-                                }),
-                        ),
+                        t,
                     )
                 }
                 Res::Defn(DefnKind::Value, id) => {
@@ -1157,13 +1167,20 @@ pub fn infer(
                     let ItemKind::Value(t, _) = gcx.arenas.ast.item(i).kind else {
                         unreachable!()
                     };
+                    let t = eval_ty(
+                        gcx,
+                        im::Vector::new(),
+                        surf_ty_to_core(gcx, TypeckCtxt::default(), t)?,
+                    );
                     (
-                        ast::Expr::new(gcx, gcx.arenas.core.lower_id(e.id), CE::Free(*id), e.span),
-                        eval_ty(
+                        ast::Expr::new(
                             gcx,
-                            im::Vector::new(),
-                            surf_ty_to_core(gcx, TypeckCtxt::default(), t)?,
+                            gcx.arenas.core.lower_id(e.id),
+                            CE::Free(*id),
+                            e.span,
+                            Some(t),
                         ),
+                        t,
                     )
                 }
                 Res::Local(id) => {
@@ -1181,6 +1198,7 @@ pub fn infer(
                             gcx.arenas.core.lower_id(e.id),
                             CE::Var(id, DeBruijnIdx::from(pos)),
                             e.span,
+                            Some(*vt),
                         ),
                         *vt,
                     )
@@ -1267,7 +1285,7 @@ pub fn infer(
             };
             let u = check(
                 gcx,
-                tcx,
+                tcx.clone(),
                 u,
                 a,
                 TypeExpectation::FunctionApp(
@@ -1280,17 +1298,30 @@ pub fn infer(
                     gcx,
                     gcx.arenas.core.lower_id(e.id),
                     CE::App(
-                        mv.into_iter().fold(t, |acc, x| {
-                            ast::Expr::new(
-                                gcx,
-                                gcx.arenas.core.next_id(),
-                                CE::TyApp(acc, x),
-                                e.span,
-                            )
-                        }),
+                        mv.into_iter()
+                            .fold((t, a), |(acc, a), x| {
+                                let VTyKind::Forall(_, _, closure) = gcx.arenas.tyck.vty(a).kind
+                                else {
+                                    unreachable!()
+                                };
+                                let vx = eval_ty(gcx, tcx.env.clone(), x);
+                                let a = apply_ty_closure(gcx, closure, vx);
+                                (
+                                    ast::Expr::new(
+                                        gcx,
+                                        gcx.arenas.core.next_id(),
+                                        CE::TyApp(acc, x),
+                                        e.span,
+                                        Some(a),
+                                    ),
+                                    a,
+                                )
+                            })
+                            .0,
                         u,
                     ),
                     e.span,
+                    Some(b),
                 ),
                 b,
             )
@@ -1308,14 +1339,15 @@ pub fn infer(
 
             let cid = gcx.arenas.core.lower_id(e.id);
             let (expr, b) = infer(gcx, tcx.bind_val(cid, a), body)?;
+            let t = VTy::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                VT::Arrow(a, b),
+                Span((u32::MAX..u32::MAX).into()),
+            );
             (
-                ast::Expr::new(gcx, cid, CE::Lam(cid, x, expr), e.span),
-                VTy::new(
-                    gcx,
-                    gcx.arenas.core.next_id(),
-                    VT::Arrow(a, b),
-                    Span((u32::MAX..u32::MAX).into()),
-                ),
+                ast::Expr::new(gcx, cid, CE::Lam(cid, x, expr), e.span, Some(t)),
+                t,
             )
         }
         SE::Let(x, Recursive::NotRecursive, None, e1, e2) => {
@@ -1325,7 +1357,7 @@ pub fn infer(
             let t_e1 = quote_ty(gcx, tcx.lvl, vt_e1);
 
             (
-                ast::Expr::new(gcx, cid, CE::Let(cid, x, t_e1, e1, e2), e.span),
+                ast::Expr::new(gcx, cid, CE::Let(cid, x, t_e1, e1, e2), e.span, Some(vt_e2)),
                 vt_e2,
             )
         }
@@ -1343,19 +1375,28 @@ pub fn infer(
             let (e2, vt_e2) = infer(gcx, tcx.clone().bind_val(cid, vt_e1), e2)?;
 
             (
-                ast::Expr::new(gcx, cid, CE::Let(cid, x, t_e1, e1, e2), e.span),
+                ast::Expr::new(gcx, cid, CE::Let(cid, x, t_e1, e1, e2), e.span, Some(vt_e2)),
                 vt_e2,
             )
         }
-        SE::Number(v) => (
-            ast::Expr::new(gcx, gcx.arenas.core.lower_id(e.id), CE::Number(v), e.span),
-            VTy::new(
+        SE::Number(v) => {
+            let t = VTy::new(
                 gcx,
                 gcx.arenas.core.next_id(),
                 VTyKind::Primitive(PrimTy::Integer),
                 e.span,
-            ),
-        ),
+            );
+            (
+                ast::Expr::new(
+                    gcx,
+                    gcx.arenas.core.lower_id(e.id),
+                    CE::Number(v),
+                    e.span,
+                    Some(t),
+                ),
+                t,
+            )
+        }
         SE::BinaryOp {
             left,
             kind:
@@ -1401,6 +1442,7 @@ pub fn infer(
                     gcx.arenas.core.lower_id(e.id),
                     CE::BinaryOp { left, kind, right },
                     e.span,
+                    Some(int),
                 ),
                 int,
             )
@@ -1439,6 +1481,7 @@ pub fn infer(
                     gcx.arenas.core.lower_id(e.id),
                     CE::BinaryOp { left, kind, right },
                     e.span,
+                    Some(bool_ty),
                 ),
                 bool_ty,
             )
@@ -1476,31 +1519,41 @@ pub fn infer(
                 int,
                 TypeExpectation::BinaryOp(e.span, "Integer -> Integer -> Boolean"),
             )?;
-
+            let t = VTy::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                VTyKind::Primitive(PrimTy::Boolean),
+                e.span,
+            );
             (
                 ast::Expr::new(
                     gcx,
                     gcx.arenas.core.lower_id(e.id),
                     CE::BinaryOp { left, kind, right },
                     e.span,
+                    Some(t),
                 ),
-                VTy::new(
-                    gcx,
-                    gcx.arenas.core.next_id(),
-                    VTyKind::Primitive(PrimTy::Boolean),
-                    e.span,
-                ),
+                t,
             )
         }
-        SE::Boolean(v) => (
-            ast::Expr::new(gcx, gcx.arenas.core.lower_id(e.id), CE::Boolean(v), e.span),
-            VTy::new(
+        SE::Boolean(v) => {
+            let t = VTy::new(
                 gcx,
                 gcx.arenas.core.next_id(),
                 VTyKind::Primitive(PrimTy::Boolean),
                 e.span,
-            ),
-        ),
+            );
+            (
+                ast::Expr::new(
+                    gcx,
+                    gcx.arenas.core.lower_id(e.id),
+                    CE::Boolean(v),
+                    e.span,
+                    Some(t),
+                ),
+                t,
+            )
+        }
         // TODO: if check rule
         SE::If(cond, then, then_else) => {
             let cond = check(
@@ -1531,6 +1584,7 @@ pub fn infer(
                     gcx.arenas.core.lower_id(e.id),
                     CE::If(cond, then, then_else),
                     e.span,
+                    Some(vt_then),
                 ),
                 vt_then,
             )
@@ -1544,19 +1598,21 @@ pub fn infer(
                 .unzip::<_, _, im::Vector<_>, im::Vector<_>>();
 
             // TODO: better tuple error messages
+            let t = VTy::new(
+                gcx,
+                gcx.arenas.core.next_id(),
+                VTyKind::Tuple(tys),
+                Span((u32::MAX..u32::MAX).into()),
+            );
             (
                 ast::Expr::new(
                     gcx,
                     gcx.arenas.core.lower_id(e.id),
                     CE::Tuple(spine),
                     e.span,
+                    Some(t),
                 ),
-                VTy::new(
-                    gcx,
-                    gcx.arenas.core.next_id(),
-                    VTyKind::Tuple(tys),
-                    Span((u32::MAX..u32::MAX).into()),
-                ),
+                t,
             )
         }
         SE::TupleProj(expr, ix) => {
@@ -1591,14 +1647,16 @@ pub fn infer(
                 TypeExpectation::TupleProj(e.span, ix),
             )?;
 
+            let t = *mvs.get(ix as usize).unwrap();
             (
                 ast::Expr::new(
                     gcx,
                     gcx.arenas.core.lower_id(e.id),
                     CE::TupleProj(expr, ix),
                     e.span,
+                    Some(t),
                 ),
-                *mvs.get(ix as usize).unwrap(),
+                t,
             )
         }
         _ => todo!("{:#?}", e),
@@ -1612,18 +1670,30 @@ pub fn infer_and_inst(
 ) -> Result<(Id<ast::Expr>, Id<VTy>), ElabError> {
     let (e, t) = infer(gcx, tcx.clone(), ie)?;
     let sp = gcx.arenas.core.expr(e).span;
-    let (t, mv) = eagerly_instantiate(gcx, tcx, t, sp);
+    let (new_t, mv) = eagerly_instantiate(gcx, tcx.clone(), t, sp);
 
     Ok((
-        mv.into_iter().fold(e, |acc, x| {
-            ast::Expr::new(
-                gcx,
-                gcx.arenas.core.next_id(),
-                ast::ExprKind::TyApp(acc, x),
-                sp,
-            )
-        }),
-        t,
+        mv.into_iter()
+            .fold((e, t), |(acc, t), x| {
+                let VTyKind::Forall(_, _, closure) = gcx.arenas.tyck.vty(t).kind else {
+                    unreachable!()
+                };
+                let vx = eval_ty(gcx, tcx.env.clone(), x);
+                let t = apply_ty_closure(gcx, closure, vx);
+
+                (
+                    ast::Expr::new(
+                        gcx,
+                        gcx.arenas.core.next_id(),
+                        ast::ExprKind::TyApp(acc, x),
+                        sp,
+                        Some(t),
+                    ),
+                    t,
+                )
+            })
+            .0,
+        new_t,
     ))
 }
 

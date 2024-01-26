@@ -175,13 +175,22 @@ pub struct Expr {
 }
 
 impl Expr {
-    pub fn new(gcx: &GlobalCtxt, id: CoreAstId, kind: ExprKind, span: Span) -> Id<Expr> {
+    pub fn new(
+        gcx: &GlobalCtxt,
+        id: CoreAstId,
+        kind: ExprKind,
+        span: Span,
+        ty: Option<Id<VTy>>,
+    ) -> Id<Expr> {
         let x = gcx
             .arenas
             .core
             .expr
             .borrow_mut()
             .alloc(Expr { id, kind, span });
+        if let Some(ty) = ty {
+            gcx.arenas.core.ty_map.borrow_mut().insert(id, ty);
+        }
         assert_eq!(
             gcx.arenas
                 .core
@@ -307,6 +316,7 @@ pub struct CoreAstArenas {
     next_ast_id: Cell<u32>,
     core_id_to_node: RefCell<HashMap<CoreAstId, Node>>,
     surf_to_core: RefCell<HashMap<AstId, CoreAstId>>,
+    ty_map: RefCell<HashMap<CoreAstId, Id<VTy>>>,
 }
 
 impl Default for CoreAstArenas {
@@ -317,6 +327,7 @@ impl Default for CoreAstArenas {
             next_ast_id: Cell::new(1),
             core_id_to_node: Default::default(),
             surf_to_core: Default::default(),
+            ty_map: Default::default(),
         }
     }
 }
