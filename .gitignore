@@ -18,3 +18,9 @@
 /target
 *~
 .stack-work
+*.ll
+*.bc
+*.o
+*.wasm
+*.wat
+.dir-locals.el
