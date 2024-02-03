@@ -10,13 +10,13 @@ use calypso_base::symbol::{Ident, Symbol};
 use id_arena::{Arena, Id};
 
 use crate::{
-    ast::{AstId, BinOpKind, PrimTy},
+    ast::{AstId, BinOpKind, PrimTy, Recursive},
     ctxt::GlobalCtxt,
     parse::Span,
 };
 
 use super::{
-    norm::{nf_ty_force, FlexTuple, VTy},
+    norm::{nf_ty_force, VTy},
     TypeckCtxt,
 };
 
@@ -206,17 +206,18 @@ impl Expr {
 #[derive(Clone, Debug)]
 pub enum ExprKind {
     Unit,
-    Var(CoreAstId, DeBruijnIdx),
-    LiftedVar(DeBruijnIdx),
+    Var(CoreAstId),
+    LiftedVar(CoreAstId),
     /// N.B. this level is only valid within the most recent
     /// [`ExprKind::LiftedLam`] binder
-    LiftedFree(DeBruijnLvl),
+    LiftedFree(CoreAstId),
+    LiftedLamRef(CoreAstId),
     Lam(CoreAstId, Ident, Id<Expr>),
     LiftedLam(im::Vector<CoreAstId>, Id<Expr>),
     LiftedApp(Id<Expr>, im::Vector<Id<Expr>>),
     App(Id<Expr>, Id<Expr>),
     TyApp(Id<Expr>, Id<Ty>),
-    Let(CoreAstId, Ident, Id<Ty>, Id<Expr>, Id<Expr>),
+    Let(CoreAstId, Ident, Recursive, Id<Ty>, Id<Expr>, Id<Expr>),
     TyAbs(CoreAstId, Ident, Id<Expr>),
     Free(AstId),
     EnumConstructor(AstId, usize),
@@ -278,7 +279,7 @@ impl Expr {
                 Self::report_deferred(x, gcx);
             }
             ExprKind::TyApp(f, _) => Self::report_deferred(f, gcx),
-            ExprKind::Let(_, _, _, e1, e2) => {
+            ExprKind::Let(_, _, _, _, e1, e2) => {
                 Self::report_deferred(e1, gcx);
                 Self::report_deferred(e2, gcx);
             }
@@ -333,6 +334,10 @@ impl Default for CoreAstArenas {
 }
 
 impl CoreAstArenas {
+    pub fn ty_of_expr(&self, id: CoreAstId) -> Id<VTy> {
+        *self.ty_map.borrow().get(&id).unwrap()
+    }
+
     pub fn clear(&self) {
         self.next_ast_id.set(1);
         self.core_id_to_node.borrow_mut().clear();
@@ -396,7 +401,7 @@ impl Node {
         match self {
             Self::Expr(expr) => match gcx.arenas.core.expr(expr).kind {
                 ExprKind::Unit
-                | ExprKind::Var(_, _)
+                | ExprKind::Var(_)
                 | ExprKind::App(_, _)
                 | ExprKind::TyApp(_, _)
                 | ExprKind::Free(_)
@@ -412,11 +417,12 @@ impl Node {
                 ExprKind::LiftedLam(..)
                 | ExprKind::LiftedVar(..)
                 | ExprKind::LiftedFree(..)
-                | ExprKind::LiftedApp(..) => {
+                | ExprKind::LiftedApp(..)
+                | ExprKind::LiftedLamRef(..) => {
                     unimplemented!()
                 }
                 ExprKind::Lam(_, id, _)
-                | ExprKind::Let(_, id, _, _, _)
+                | ExprKind::Let(_, id, _, _, _, _)
                 | ExprKind::TyAbs(_, id, _) => Some(id),
             },
             Self::Ty(ty) => match gcx.arenas.core.ty(ty).kind {

@@ -1,9 +1,8 @@
 use std::{cmp::Ordering, rc::Rc};
 
-use calypso_base::symbol::Symbol;
 use id_arena::Id;
 
-use crate::{ast::PrimTy, ctxt::GlobalCtxt, parse::Span, typeck::fresh_meta};
+use crate::ctxt::GlobalCtxt;
 
 use super::{
     ast::{CoreAstId, DeBruijnLvl, MetaEntry, MetaVar, Ty, TyKind},

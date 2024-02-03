@@ -495,7 +495,22 @@ impl<'gcx> ResolutionCtxt<'gcx> {
                 self.lower_expr(inn)?;
                 self.expr_stack.pop();
             }
-            ExprKind::Let(..) => todo!(),
+            ExprKind::Let(var, Recursive::Recursive(_), ty, inner_expr, inn) => {
+                let ty = ty.map(|x| self.lower_ty(x)).transpose()?;
+                if let Some(plus) = &ty {
+                    self.ty_stack.extend(plus);
+                }
+                self.expr_stack.push((expr.id, var.symbol));
+                self.lower_expr(inner_expr)?;
+                self.expr_stack.pop();
+
+                if let Some(plus) = &ty {
+                    self.ty_stack.truncate(self.ty_stack.len() - plus.len());
+                }
+                self.expr_stack.push((expr.id, var.symbol));
+                self.lower_expr(inn)?;
+                self.expr_stack.pop();
+            }
             ExprKind::Err => (),
             ExprKind::BinaryOp { left, right, .. } => {
                 self.lower_expr(left)?;

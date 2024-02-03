@@ -1,12 +1,11 @@
-use std::collections::HashMap;
+#![warn(clippy::undocumented_unsafe_blocks)]
+use std::{collections::HashMap, path::Path};
 
 use ariadne::Source;
 use calypso_base::symbol::Symbol;
 use ctxt::GlobalCtxt;
 use error::TysResult;
-use eval::EvalCtx;
-use itertools::Itertools;
-use pretty::{DocAllocator, RcAllocator, RcDoc};
+use spinneret::{encoder::ExportKind, Function, InsnBuilderBase};
 
 use crate::{
     ast::ItemKind,
@@ -22,7 +21,6 @@ pub mod codegen;
 pub mod ctxt;
 pub mod diag;
 pub mod error;
-pub mod eval;
 pub mod intern;
 pub mod parse;
 pub mod resolve;
@@ -34,6 +32,7 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
     resolve::resolve_code_unit(gcx, &items)?;
     // let cu = lowering::lower_code_unit(gcx, decls)?;
 
+    let mut cont = true;
     if !suppress_output {
         {
             let mut drcx = gcx.drcx.borrow_mut();
@@ -83,18 +82,35 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
                 {
                     let mut drcx = gcx.drcx.borrow_mut();
                     for err in drcx.errors() {
+                        cont = false;
                         err.eprint(Source::from(&src))?;
                     }
 
                     if let Some(fatal) = drcx.fatal() {
                         fatal.eprint(Source::from(&src))?;
                         drcx.clear();
+                        cont = false;
                         continue;
                     }
                     drcx.clear();
                 }
                 let e = e.unwrap();
                 Expr::report_deferred(e, gcx);
+                {
+                    let mut drcx = gcx.drcx.borrow_mut();
+                    for err in drcx.errors() {
+                        cont = false;
+                        err.eprint(Source::from(&src))?;
+                    }
+
+                    if let Some(fatal) = drcx.fatal() {
+                        fatal.eprint(Source::from(&src))?;
+                        drcx.clear();
+                        cont = false;
+                        continue;
+                    }
+                    drcx.clear();
+                }
                 let t = nf_ty_force(gcx, DeBruijnLvl::from(0usize), im::Vector::new(), t);
 
                 let mut w = Vec::new();
@@ -118,6 +134,9 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
                     String::from_utf8(w).unwrap(),
                     String::from_utf8(w1).unwrap()
                 );
+                if !cont {
+                    return Ok(());
+                }
 
                 let (lift, e) = codegen::closure::closure_convert(gcx, e);
                 lifted.extend(lift.into_iter());
@@ -164,85 +183,65 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
 
         let mut ccx = codegen::CodegenCtxt::new(gcx, values.clone());
 
-        for val in lifted {
-            let func = ccx.build_func(
-                Symbol::intern(&format!("lifted.{}", gcx.arenas.core.expr(val).id)),
-                val,
-            );
-        }
-        for (id, (func, _)) in values {
-            let func = ccx.build_func(
-                Symbol::intern(&format!(
-                    "{}.{}",
-                    gcx.arenas
-                        .ast
-                        .get_node_by_id(id)
-                        .unwrap()
-                        .ident(gcx)
-                        .unwrap()
-                        .symbol,
-                    gcx.arenas.core.expr(func).id
-                )),
-                func,
-            );
-            func.pretty();
-            println!("== SCCP ==");
-            codegen::constant_prop::run(func);
-            func.pretty();
-            func.recalculate_cfg();
-            func.recalculate_dominators();
-            func.assert_valid();
-            codegen::dead_code::run(func);
-            println!("== DCE ==");
-            func.pretty();
-            func.recalculate_cfg();
-            func.recalculate_dominators();
-            func.assert_valid();
-            println!("== SCCP ==");
-            codegen::constant_prop::run(func);
-            func.pretty();
-            func.recalculate_cfg();
-            func.recalculate_dominators();
-            func.assert_valid();
-            codegen::dead_code::run(func);
-            println!("== DCE ==");
-            func.pretty();
-            func.recalculate_cfg();
-            func.recalculate_dominators();
-            func.assert_valid();
+        let t = ccx.module.types().function([], []);
+        let mut func = ccx.module.function(t);
 
-            //     println!("== Dominators: ==");
-            //     for (block, val) in func.dfg.dominators.iter() {
-            //         println!(
-            //             "{}: {}",
-            //             block.pretty(func).pretty(80),
-            //             RcAllocator
-            //                 .intersperse(
-            //                     val.iter()
-            //                         .sorted_by_key(|x| x.as_u32())
-            //                         .map(|x| x.pretty(func)),
-            //                     RcDoc::text(",").append(RcDoc::space())
-            //                 )
-            //                 .pretty(80),
-            //         );
-            //     }
-            //     println!("== Postdominators: ==");
-            //     for (block, val) in func.dfg.postdominators.iter() {
-            //         println!(
-            //             "{}: {}",
-            //             block.pretty(func).pretty(80),
-            //             RcAllocator
-            //                 .intersperse(
-            //                     val.iter()
-            //                         .sorted_by_key(|x| x.as_u32())
-            //                         .map(|x| x.pretty(func)),
-            //                     RcDoc::text(",").append(RcDoc::space())
-            //                 )
-            //                 .pretty(80),
-            //         );
-            //     }
-            //     println!();
+        let mut func_counter = 1;
+        let mut bodies = HashMap::new();
+        let mut statics = HashMap::new();
+        let mut values1 = HashMap::new();
+        let mut sorted = vec![];
+
+        for (id, (expr, _)) in values {
+            let expr = codegen::ir::Expr::from_core(gcx, &mut ccx.arenas, expr);
+            values1.insert(id, expr);
+            if ccx.arenas.exprs[expr].ty.is_arrow(&ccx.arenas) {
+                bodies.insert(expr, Function(func_counter));
+            } else {
+                bodies.insert(expr, Function(func_counter));
+                statics.insert(expr, Function(func_counter));
+                func.call(Function(func_counter));
+            };
+            sorted.push((
+                Function(func_counter),
+                expr,
+                gcx.arenas
+                    .ast
+                    .get_node_by_id(id)
+                    .unwrap()
+                    .ident(gcx)
+                    .unwrap()
+                    .symbol,
+            ));
+            func_counter += 1;
         }
+        for val in lifted {
+            let id = gcx.arenas.core.expr(val).id;
+            let val = codegen::ir::Expr::from_core(gcx, &mut ccx.arenas, val);
+            bodies.insert(val, Function(func_counter));
+            ccx.lifted.insert(id, val);
+            sorted.push((
+                Function(func_counter),
+                val,
+                Symbol::intern(&format!("lifted.{}", id)),
+            ));
+            func_counter += 1;
+        }
+        ccx.bodies1 = bodies;
+        ccx.values = values1;
+
+        let func = func.finish(&mut ccx.module);
+        ccx.module.export("_start", ExportKind::Func, func.0);
+
+        for (_, expr, name) in &sorted {
+            ccx.declare_func(*name, *expr);
+        }
+        for (_, expr, name) in sorted {
+            ccx.build_func(name, expr);
+        }
+
+        ccx.lmodule.verify();
+
         // let expr = eval::eval_expr(gcx, &mut ecx, im::Vector::new(), main);
         // let expr = eval::force_barrier(&mut ecx, expr);
         // let expr = eval::quote_expr(gcx, &mut ecx, DeBruijnLvl::from(0usize), expr);
@@ -263,6 +262,10 @@ pub fn run(src: &str, gcx: &GlobalCtxt, suppress_output: bool) -> TysResult<()> 
 
         // println!("\n{:#?}", gcx);
         // println!("\n{:#?}", tyck);
+
+        ccx.lmodule.write_to_file(Path::new("out.bc")).unwrap();
+
+        //std::fs::write("out.wasm", ccx.finish_module()).unwrap();
     }
 
     Ok(())

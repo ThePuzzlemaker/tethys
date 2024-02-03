@@ -21,6 +21,9 @@ im = "15.1.0"
 chumsky = { git = "https://github.com/zesterer/chumsky.git", features = ["pratt", "label"] }
 cranelift-entity = "0.103.0"
 itertools = "0.12.0"
+spinneret = { git = "https://git.sr.ht/~thepuzzlemaker/spinneret" }
+llvm-sys = { version = "170", features = ["prefer-static"] }
+libc = "0.2.153"
 
 [dependencies.calypso_base]
 git = "https://github.com/calypso-lang/calypso.git"

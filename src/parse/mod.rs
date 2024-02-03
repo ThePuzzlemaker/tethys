@@ -102,6 +102,8 @@ pub enum Token {
     Then,
     #[token("else")]
     Else,
+    #[token("rec")]
+    Rec,
 
     #[regex("\\\\|λ")]
     Lambda,
@@ -239,6 +241,7 @@ impl Token {
             Token::If => "`if`",
             Token::Then => "`then`",
             Token::Else => "`else`",
+            Token::Rec => "`rec`",
             Token::Lambda => "`\\` or `λ`",
             Token::Dot => "`.`",
             Token::LParen => "`(`",
@@ -634,19 +637,30 @@ pub fn parser<'src>() -> impl Parser<'src, TysInput<'src>, Vec<Id<Item>>, Extra<
             // 10
             just(Token::Let)
                 .map_with(|_, extra| -> Span { extra.span() })
+                .then(
+                    just(Token::Rec)
+                        .map_with(|_, extra| -> Span { extra.span() })
+                        .or_not(),
+                )
                 .then(ident)
                 .then(just(Token::Colon).ignore_then(ty.clone()).or_not())
                 .then_ignore(just(Token::Eq))
                 .then(expr.clone())
                 .then_ignore(just(Token::In))
                 .then(expr)
-                .map_with(|((((sp, ident), ty), expr), inn), extra| {
+                .map_with(|(((((sp, rec), ident), ty), expr), inn), extra| {
                     let gcx: &mut &GlobalCtxt = extra.state();
                     let sp = sp.with_hi(gcx.arenas.ast.expr(inn).span.hi()).into();
                     Expr::new(
                         gcx,
-                        // TODO
-                        ExprKind::Let(ident, Recursive::NotRecursive, ty, expr, inn),
+                        ExprKind::Let(
+                            ident,
+                            rec.map(Recursive::Recursive)
+                                .unwrap_or(Recursive::NotRecursive),
+                            ty,
+                            expr,
+                            inn,
+                        ),
                         sp,
                     )
                 })

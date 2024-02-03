@@ -29,18 +29,26 @@
 //! it does, so I'm not gonna prod at it cause that will only bring
 //! pain.
 
+use std::collections::HashMap;
+
 use id_arena::Id;
 
 use crate::{
+    ast::Recursive,
     ctxt::GlobalCtxt,
-    eval::EvalCtx,
-    typeck::ast::{CoreAstId, DeBruijnIdx, DeBruijnLvl, Expr, ExprKind},
+    parse::Span,
+    typeck::{
+        ast::{CoreAstId, DeBruijnIdx, DeBruijnLvl, Expr, ExprKind},
+        norm::{self, VTy, VTyKind},
+        pretty::pp_ty,
+    },
 };
 
 struct ConvCtxt {
     lifted: Vec<Id<Expr>>,
     scopes: Vec<Scope>,
     env: Vec<CoreAstId>,
+    letrec: HashMap<CoreAstId, CoreAstId>,
 }
 
 impl ConvCtxt {}
@@ -50,6 +58,7 @@ pub fn closure_convert(gcx: &GlobalCtxt, term: Id<Expr>) -> (Vec<Id<Expr>>, Id<E
         lifted: vec![],
         env: vec![],
         scopes: vec![],
+        letrec: HashMap::new(),
     };
 
     let res = convert(gcx, &mut ctx, term, 0, Mode::Root);
@@ -68,6 +77,7 @@ enum Mode {
     Collect,
     Traverse,
     Root,
+    LetRec(CoreAstId),
 }
 
 // TODO: this could be made way simpler if I didn't unfold lambdas
@@ -81,28 +91,46 @@ fn convert(
     mode: Mode,
 ) -> Id<Expr> {
     let sp = gcx.arenas.core.expr(term).span;
+    let id = gcx.arenas.core.expr(term).id;
+    let ty = gcx.arenas.core.ty_of_expr(id);
     match gcx.arenas.core.expr(term).kind {
-        ExprKind::Var(_, ix) => {
-            let scope = &mut ctx.scopes[scope_ix];
-            let lvl = DeBruijnLvl::from(ctx.env.len() - ix.index() - 1);
-            if lvl < scope.offset {
-                let i = ctx.env[lvl.index()];
-                scope.free.push_back(i);
+        ExprKind::Var(id) => {
+            if let Some(new_id) = ctx.letrec.get(&id) {
                 Expr::new(
                     gcx,
                     gcx.arenas.core.next_id(),
-                    ExprKind::LiftedFree(DeBruijnLvl::from(scope.free.len() - 1)),
+                    ExprKind::LiftedLamRef(*new_id),
                     sp,
-                    None,
+                    Some(ty),
                 )
             } else {
-                Expr::new(
-                    gcx,
-                    gcx.arenas.core.next_id(),
-                    ExprKind::LiftedVar(DeBruijnIdx::from(ix.index())),
-                    sp,
-                    None,
-                )
+                let scope = &mut ctx.scopes[scope_ix];
+                let lvl = ctx
+                    .env
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .find_map(|(ix, x)| (x == id).then_some(ix))
+                    .unwrap();
+                if lvl < scope.offset {
+                    let i = ctx.env[lvl];
+                    scope.free.push_back(i);
+                    Expr::new(
+                        gcx,
+                        gcx.arenas.core.next_id(),
+                        ExprKind::LiftedFree(id),
+                        sp,
+                        Some(ty),
+                    )
+                } else {
+                    Expr::new(
+                        gcx,
+                        gcx.arenas.core.next_id(),
+                        ExprKind::LiftedVar(id),
+                        sp,
+                        Some(ty),
+                    )
+                }
             }
         }
         ExprKind::Lam(i, _, body) if mode == Mode::Collect => {
@@ -112,7 +140,9 @@ fn convert(
 
             convert(gcx, ctx, body, scope_ix, Mode::Collect)
         }
-        ExprKind::Lam(i, _, body) if mode == Mode::Traverse || mode == Mode::Root => {
+        ExprKind::Lam(i, _, body)
+            if mode == Mode::Traverse || mode == Mode::Root || matches!(mode, Mode::LetRec(..)) =>
+        {
             let mut scope = Scope {
                 offset: ctx.env.len(),
                 ..Scope::default()
@@ -131,31 +161,80 @@ fn convert(
 
             let vars = &ctx.env[ctx.scopes[next_scope_ix].offset
                 ..ctx.scopes[next_scope_ix].offset + ctx.scopes[next_scope_ix].len];
-            let res = Expr::new(
-                gcx,
-                gcx.arenas.core.next_id(),
-                ExprKind::LiftedLam(
-                    ctx.scopes[next_scope_ix]
-                        .free
-                        .iter()
-                        .chain(vars.iter())
-                        .copied()
-                        .collect(),
-                    res,
-                ),
-                sp,
-                None,
+            let ids = ctx.scopes[next_scope_ix]
+                .free
+                .iter()
+                .chain(vars.iter())
+                .copied()
+                .collect();
+            let base_ty = gcx.arenas.core.ty_of_expr(vars[0]);
+            let ty = ctx.scopes[next_scope_ix]
+                .free
+                .iter()
+                .fold(base_ty, |acc, x| {
+                    let VTyKind::Arrow(a, _) =
+                        gcx.arenas.tyck.vty(gcx.arenas.core.ty_of_expr(*x)).kind
+                    else {
+                        unreachable!()
+                    };
+
+                    VTy::new(
+                        gcx,
+                        gcx.arenas.core.next_id(),
+                        VTyKind::Arrow(a, acc),
+                        Span((0..0).into()),
+                    )
+                });
+            println!(
+                "base ty: {}",
+                pp_ty(
+                    0,
+                    gcx,
+                    0usize.into(),
+                    im::Vector::new(),
+                    norm::quote_ty(gcx, 0usize.into(), base_ty)
+                )
+                .group()
+                .pretty(80)
             );
+            println!(
+                "accum ty: {}",
+                pp_ty(
+                    0,
+                    gcx,
+                    0usize.into(),
+                    im::Vector::new(),
+                    norm::quote_ty(gcx, 0usize.into(), ty)
+                )
+                .group()
+                .pretty(80)
+            );
+            let new_id = if let Mode::LetRec(id) = mode {
+                id
+            } else {
+                gcx.arenas.core.next_id()
+            };
+            let res = Expr::new(gcx, new_id, ExprKind::LiftedLam(ids, res), sp, Some(ty));
             if mode != Mode::Root {
                 ctx.lifted.push(res);
             }
+            let res_ref = if mode == Mode::Root {
+                res
+            } else {
+                Expr::new(
+                    gcx,
+                    gcx.arenas.core.next_id(),
+                    ExprKind::LiftedLamRef(new_id),
+                    sp,
+                    Some(ty),
+                )
+            };
 
             let xs = ctx.scopes[next_scope_ix]
                 .free
                 .clone()
                 .iter()
                 .map(|id| {
-                    let mut free_scope = None;
                     let mut free_ix = None;
                     let mut free_scope_ix = None;
 
@@ -167,7 +246,6 @@ fn convert(
                             .find_map(|(x, i)| (i == id).then_some(x))
                         {
                             free_ix = Some(x);
-                            free_scope = Some(scope.clone());
                             free_scope_ix = Some(scope_ix);
                         };
                     }
@@ -185,27 +263,31 @@ fn convert(
                         }
                     }
 
+                    let VTyKind::Arrow(a, _) =
+                        gcx.arenas.tyck.vty(gcx.arenas.core.ty_of_expr(*id)).kind
+                    else {
+                        unreachable!()
+                    };
+
                     Expr::new(
                         gcx,
                         gcx.arenas.core.next_id(),
-                        ExprKind::LiftedVar(DeBruijnIdx::from(
-                            free_ix.unwrap() - free_scope.unwrap().offset,
-                        )),
+                        ExprKind::LiftedVar(*id),
                         sp,
-                        None,
+                        Some(a),
                     )
                 })
                 .collect::<im::Vector<_>>();
 
             let res = if xs.is_empty() {
-                res
+                res_ref
             } else {
                 Expr::new(
                     gcx,
                     gcx.arenas.core.next_id(),
-                    ExprKind::LiftedApp(res, xs),
+                    ExprKind::LiftedApp(res_ref, xs),
                     sp,
-                    None,
+                    Some(base_ty),
                 )
             };
 
@@ -223,32 +305,42 @@ fn convert(
                 gcx.arenas.core.next_id(),
                 ExprKind::App(f, x),
                 sp,
-                None,
+                Some(ty),
             )
         }
         ExprKind::TyApp(e, _) | ExprKind::TyAbs(_, _, e) => {
             convert(gcx, ctx, e, scope_ix, Mode::Traverse)
         }
         // TODO: lower `let`s elsewhere?
-        ExprKind::Let(x, i, _, e1, e2) => {
-            let e2 = Expr::new(
+        ExprKind::Let(x, i, Recursive::NotRecursive, t, e1, e2) => {
+            let e1 = convert(gcx, ctx, e1, scope_ix, Mode::Traverse);
+
+            let mut scope = Scope {
+                offset: ctx.env.len(),
+                ..Scope::default()
+            };
+            scope.len += 1;
+            ctx.env.push(x);
+            ctx.scopes.push(scope);
+
+            let e2 = convert(gcx, ctx, e2, scope_ix, Mode::Traverse);
+            ctx.scopes.pop();
+            ctx.env.pop();
+            Expr::new(
                 gcx,
                 gcx.arenas.core.next_id(),
-                ExprKind::App(
-                    Expr::new(
-                        gcx,
-                        gcx.arenas.core.next_id(),
-                        ExprKind::Lam(x, i, e2),
-                        sp,
-                        None,
-                    ),
-                    e1,
-                ),
+                ExprKind::Let(x, i, Recursive::NotRecursive, t, e1, e2),
                 sp,
-                None,
-            );
+                Some(ty),
+            )
+        }
+        ExprKind::Let(x, i, Recursive::Recursive(sp), t, e1, e2) => {
+            let new_id = gcx.arenas.core.next_id();
+            ctx.letrec.insert(x, new_id);
+            let e1 = convert(gcx, ctx, e1, scope_ix, Mode::LetRec(new_id));
             convert(gcx, ctx, e2, scope_ix, Mode::Traverse)
         }
+
         ExprKind::BinaryOp { left, kind, right } => {
             let left = convert(gcx, ctx, left, scope_ix, Mode::Traverse);
             let right = convert(gcx, ctx, right, scope_ix, Mode::Traverse);
@@ -257,7 +349,7 @@ fn convert(
                 gcx.arenas.core.next_id(),
                 ExprKind::BinaryOp { left, kind, right },
                 sp,
-                None,
+                Some(ty),
             )
         }
         ExprKind::If(cond, then, then_else) => {
@@ -269,7 +361,7 @@ fn convert(
                 gcx.arenas.core.next_id(),
                 ExprKind::If(cond, then, then_else),
                 sp,
-                None,
+                Some(ty),
             )
         }
         ExprKind::Tuple(v) => Expr::new(
@@ -281,7 +373,7 @@ fn convert(
                     .collect(),
             ),
             sp,
-            None,
+            Some(ty),
         ),
         ExprKind::TupleProj(x, n) => {
             let x = convert(gcx, ctx, x, scope_ix, Mode::Traverse);
@@ -290,7 +382,7 @@ fn convert(
                 gcx.arenas.core.next_id(),
                 ExprKind::TupleProj(x, n),
                 sp,
-                None,
+                Some(ty),
             )
         }
         // Free with respect to the global context. These are

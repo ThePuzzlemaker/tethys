@@ -132,7 +132,7 @@ pub enum BinOpKind {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Recursive {
     NotRecursive,
-    Recursive(Ident),
+    Recursive(Span),
 }
 
 #[derive(Clone, Debug)]

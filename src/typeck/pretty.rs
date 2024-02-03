@@ -8,9 +8,9 @@ use crate::{
     ast::{
         pretty::{
             prec_binop, PREC_EXPR_APPL, PREC_EXPR_IF, PREC_EXPR_LAMBDA, PREC_EXPR_LET,
-            PREC_EXPR_PRIMARY, PREC_EXPR_TUPLE_PROJ, PREC_EXPR_UNARY,
+            PREC_EXPR_PRIMARY, PREC_EXPR_TUPLE_PROJ,
         },
-        BinOpKind, ItemKind, Node, PrimTy,
+        BinOpKind, ItemKind, Node, PrimTy, Recursive,
     },
     ctxt::GlobalCtxt,
 };
@@ -267,7 +267,7 @@ pub fn pp_expr(
 ) -> RcDoc<'_> {
     match gcx.arenas.core.expr(expr).kind {
         ExprKind::Unit => RcDoc::text("()"),
-        ExprKind::Var(id, ix) => RcDoc::text(
+        ExprKind::Var(id) => RcDoc::text(
             gcx.arenas
                 .core
                 .get_node_by_id(id)
@@ -275,8 +275,7 @@ pub fn pp_expr(
                 .ident(gcx)
                 .unwrap()
                 .as_str(),
-        )
-        .append(format!(":{ix}")),
+        ),
         ExprKind::TupleProj(expr, ix) => {
             let expr = pp_expr(PREC_EXPR_TUPLE_PROJ, gcx, l, e, expr);
             maybe_paren(
@@ -337,7 +336,7 @@ pub fn pp_expr(
             maybe_paren(
                 prec,
                 PREC_EXPR_APPL,
-                (RcAllocator.nil().append(f))
+                (RcAllocator.nil().append(f).append(RcDoc::line()))
                     .align()
                     .append(xs)
                     .align()
@@ -345,7 +344,7 @@ pub fn pp_expr(
                     .into_doc(),
             )
         }
-        ExprKind::Let(_, i, t, e1, e2) => {
+        ExprKind::Let(_, i, rec, t, e1, e2) => {
             let t = pp_ty(PREC_TY_FORALL, gcx, l, e.clone(), t);
             let e1 = pp_expr(PREC_EXPR_LET, gcx, l, e.clone(), e1);
             let e2 = pp_expr(PREC_EXPR_LET, gcx, l, e, e2);
@@ -362,6 +361,11 @@ pub fn pp_expr(
                 PREC_EXPR_LET,
                 RcAllocator
                     .text("let")
+                    .append(if rec != Recursive::NotRecursive {
+                        RcDoc::space().append("rec")
+                    } else {
+                        RcDoc::nil()
+                    })
                     .append(RcDoc::space())
                     .append(i.as_str())
                     .append(RcDoc::space())
@@ -517,6 +521,8 @@ pub fn pp_expr(
                 PREC_EXPR_LAMBDA,
                 RcAllocator
                     .text("λ*")
+                    .append(gcx.arenas.core.expr(expr).id.to_string())
+                    .append("/")
                     .append(RcAllocator.intersperse(
                         v.iter().map(|x| {
                             RcDoc::text(format!(
@@ -538,9 +544,9 @@ pub fn pp_expr(
                     .into_doc(),
             )
         }
-        ExprKind::LiftedVar(v) => RcAllocator.text(format!("@idx={v}")).into_doc(),
-
-        ExprKind::LiftedFree(v) => RcAllocator.text(format!("@lvl={v}")).into_doc(),
+        ExprKind::LiftedFree(v) => RcDoc::text("@f:").append(v.to_string()),
+        ExprKind::LiftedVar(v) => RcDoc::text("@v:").append(v.to_string()),
+        ExprKind::LiftedLamRef(v) => RcDoc::text("λ&").append(v.to_string()),
         // ExprKind::UnaryMinus(expr) => maybe_paren(
         //     prec,
         //     PREC_EXPR_UNARY,

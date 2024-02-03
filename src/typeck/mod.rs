@@ -565,6 +565,67 @@ pub fn unify_check(
     unify::unify(gcx, tcx.lvl, vt, vu)
 }
 
+fn is_arrow(gcx: &GlobalCtxt, ty: Id<ast::Ty>) -> bool {
+    use ast::TyKind as CT;
+    match gcx.arenas.core.ty(ty).kind {
+        CT::Forall(_, _, t) => is_arrow(gcx, t),
+        CT::Arrow(_, _) => true,
+        _ => false,
+    }
+}
+
+fn guard_let_rec_arrow(
+    gcx: &GlobalCtxt,
+    tcx: TypeckCtxt,
+    vty: Id<VTy>,
+    letrec_span: Span,
+    e1_or_ty_span: Span,
+    had_ty_ann: bool,
+) -> Result<(), ElabError> {
+    use ast::TyKind as CT;
+    let ty = quote_ty(gcx, tcx.lvl, vty);
+
+    let mut w = Vec::new();
+    let doc = crate::typeck::pretty::pp_ty(0, gcx, tcx.lvl, tcx.env.clone(), ty);
+    doc.render(80, &mut w).unwrap();
+    let found_s = String::from_utf8(w).unwrap();
+
+    if !is_arrow(gcx, ty) {
+        let mut report = Report::build(ReportKind::Error, (), letrec_span.lo() as usize)
+	    .with_message("`let rec` definition was not function-like")
+	    .with_note("`let rec` only allows functions (`Type -> Type`) or generic functions (`forall 'a 'b [...]. Type -> Type`)")
+	    .with_label(
+		Label::new(e1_or_ty_span)
+		    .with_color(Color::Red)
+		    .with_message(format!("found type `{found_s}`, which was not a function"))
+	    );
+
+        if !had_ty_ann {
+            report.set_help("if this type was a function, try adding a type annotation");
+        }
+
+        gcx.drcx.borrow_mut().report_syncd(report.finish());
+
+        if let CT::Meta(mv, _) | CT::InsertedMeta(mv) = gcx.arenas.core.ty(ty).kind {
+            let mv = mv.0.borrow();
+            let report = Report::build(
+                ReportKind::Custom("Help", Color::Blue),
+                (),
+                mv.1.span.lo() as usize,
+            )
+            .with_message(format!(
+                "{} was a type hole, generated from this expression",
+                mv.1.name.as_str()
+            ))
+            .with_label(Label::new(mv.1.span).with_color(Color::Blue))
+            .finish();
+            gcx.drcx.borrow_mut().report_syncd(report);
+        }
+    }
+
+    Ok(())
+}
+
 fn unify_error(
     gcx: &GlobalCtxt,
     tcx: TypeckCtxt,
@@ -789,7 +850,13 @@ pub fn check(
             )?;
             let t_e1 = quote_ty(gcx, tcx.lvl, vt_e1);
 
-            ast::Expr::new(gcx, cid, CE::Let(cid, i, t_e1, e1, e2), e.span, Some(it))
+            ast::Expr::new(
+                gcx,
+                cid,
+                CE::Let(cid, i, Recursive::NotRecursive, t_e1, e1, e2),
+                e.span,
+                Some(it),
+            )
         }
         (SE::Let(i, Recursive::NotRecursive, Some(t_e1), e1, e2), _) => {
             let t_e1 = surf_ty_to_core(gcx, tcx.clone(), t_e1)?;
@@ -811,9 +878,102 @@ pub fn check(
                 type_expectation,
             )?;
 
-            ast::Expr::new(gcx, cid, CE::Let(cid, i, t_e1, e1, e2), e.span, Some(it))
+            ast::Expr::new(
+                gcx,
+                cid,
+                CE::Let(cid, i, Recursive::NotRecursive, t_e1, e1, e2),
+                e.span,
+                Some(it),
+            )
         }
+        (SE::Let(i, Recursive::Recursive(sp), None, e1, e2), _) => {
+            let cid = gcx.arenas.core.lower_id(e.id);
+            let mv = fresh_meta(
+                gcx,
+                tcx.lvl,
+                gcx.arenas.core.next_id(),
+                Symbol::intern(&format!("?{}", i.symbol.as_str())),
+                e.span.with_hi(i.span.hi()).into(),
+                Span((0..0).into()),
+            );
+            let vmv = eval_ty(gcx, tcx.env.clone(), mv);
+            let (e1, vt_e1) = infer(gcx, tcx.clone().bind_val(cid, vmv), e1)?;
 
+            guard_let_rec_arrow(
+                gcx,
+                tcx.clone(),
+                vt_e1,
+                e.span.with_hi(sp.hi()).into(),
+                gcx.arenas.core.expr(e1).span,
+                false,
+            )?;
+
+            if let Err(err) = unify_check(gcx, tcx.clone(), vt_e1, vmv) {
+                unify_error(
+                    gcx,
+                    tcx.clone(),
+                    vmv,
+                    e1,
+                    vt_e1,
+                    TypeExpectation::Definition(sp),
+                    err,
+                )?;
+            }
+
+            let e2 = check(
+                gcx,
+                tcx.clone().bind_val(cid, vt_e1),
+                e2,
+                it,
+                type_expectation,
+            )?;
+            let t_e1 = quote_ty(gcx, tcx.lvl, vt_e1);
+
+            ast::Expr::new(
+                gcx,
+                cid,
+                CE::Let(cid, i, Recursive::Recursive(sp), t_e1, e1, e2),
+                e.span,
+                Some(it),
+            )
+        }
+        (SE::Let(i, Recursive::Recursive(sp), Some(t_e1), e1, e2), _) => {
+            let t_e1 = surf_ty_to_core(gcx, tcx.clone(), t_e1)?;
+            let vt_e1 = eval_ty(gcx, tcx.env.clone(), t_e1);
+            let cid = gcx.arenas.core.lower_id(e.id);
+
+            guard_let_rec_arrow(
+                gcx,
+                tcx.clone(),
+                vt_e1,
+                e.span.with_hi(sp.hi()).into(),
+                gcx.arenas.core.ty(t_e1).span,
+                true,
+            )?;
+
+            let e1 = check(
+                gcx,
+                tcx.clone().bind_val(cid, vt_e1),
+                e1,
+                vt_e1,
+                TypeExpectation::Definition(gcx.arenas.core.ty(t_e1).span),
+            )?;
+            let e2 = check(
+                gcx,
+                tcx.clone().bind_val(cid, vt_e1),
+                e2,
+                it,
+                type_expectation,
+            )?;
+
+            ast::Expr::new(
+                gcx,
+                cid,
+                CE::Let(cid, i, Recursive::Recursive(sp), t_e1, e1, e2),
+                e.span,
+                Some(it),
+            )
+        }
         (SE::TupleProj(expr, ix), _) => {
             let mvs = (0..=ix)
                 .map(|i| {
@@ -1185,18 +1345,17 @@ pub fn infer(
                 }
                 Res::Local(id) => {
                     let id = gcx.arenas.core.lower_id(*id);
-                    let (pos, vt) = tcx
+                    let vt = tcx
                         .vals
                         .iter()
                         .rev()
-                        .enumerate()
-                        .find_map(|(i, (x, t))| if *x == id { Some((i, t)) } else { None })
+                        .find_map(|(x, t)| if *x == id { Some(t) } else { None })
                         .unwrap();
                     (
                         ast::Expr::new(
                             gcx,
                             gcx.arenas.core.lower_id(e.id),
-                            CE::Var(id, DeBruijnIdx::from(pos)),
+                            CE::Var(id),
                             e.span,
                             Some(*vt),
                         ),
@@ -1357,7 +1516,13 @@ pub fn infer(
             let t_e1 = quote_ty(gcx, tcx.lvl, vt_e1);
 
             (
-                ast::Expr::new(gcx, cid, CE::Let(cid, x, t_e1, e1, e2), e.span, Some(vt_e2)),
+                ast::Expr::new(
+                    gcx,
+                    cid,
+                    CE::Let(cid, x, Recursive::NotRecursive, t_e1, e1, e2),
+                    e.span,
+                    Some(vt_e2),
+                ),
                 vt_e2,
             )
         }
@@ -1375,7 +1540,95 @@ pub fn infer(
             let (e2, vt_e2) = infer(gcx, tcx.clone().bind_val(cid, vt_e1), e2)?;
 
             (
-                ast::Expr::new(gcx, cid, CE::Let(cid, x, t_e1, e1, e2), e.span, Some(vt_e2)),
+                ast::Expr::new(
+                    gcx,
+                    cid,
+                    CE::Let(cid, x, Recursive::NotRecursive, t_e1, e1, e2),
+                    e.span,
+                    Some(vt_e2),
+                ),
+                vt_e2,
+            )
+        }
+
+        SE::Let(i, Recursive::Recursive(sp), None, e1, e2) => {
+            let cid = gcx.arenas.core.lower_id(e.id);
+            let mv = fresh_meta(
+                gcx,
+                tcx.lvl,
+                gcx.arenas.core.next_id(),
+                Symbol::intern(&format!("?{}", i.symbol.as_str())),
+                e.span.with_hi(i.span.hi()).into(),
+                Span((0..0).into()),
+            );
+            let vmv = eval_ty(gcx, tcx.env.clone(), mv);
+            let (e1, vt_e1) = infer(gcx, tcx.clone().bind_val(cid, vmv), e1)?;
+            guard_let_rec_arrow(
+                gcx,
+                tcx.clone(),
+                vt_e1,
+                e.span.with_hi(sp.hi()).into(),
+                gcx.arenas.core.expr(e1).span,
+                false,
+            )?;
+
+            if let Err(err) = unify_check(gcx, tcx.clone(), vt_e1, vmv) {
+                unify_error(
+                    gcx,
+                    tcx.clone(),
+                    vmv,
+                    e1,
+                    vt_e1,
+                    TypeExpectation::Definition(sp),
+                    err,
+                )?;
+            }
+
+            let (e2, vt_e2) = infer(gcx, tcx.clone().bind_val(cid, vt_e1), e2)?;
+            let t_e1 = quote_ty(gcx, tcx.lvl, vt_e1);
+
+            (
+                ast::Expr::new(
+                    gcx,
+                    cid,
+                    CE::Let(cid, i, Recursive::Recursive(sp), t_e1, e1, e2),
+                    e.span,
+                    Some(vt_e2),
+                ),
+                vt_e2,
+            )
+        }
+        SE::Let(i, Recursive::Recursive(sp), Some(t_e1), e1, e2) => {
+            let t_e1 = surf_ty_to_core(gcx, tcx.clone(), t_e1)?;
+            let vt_e1 = eval_ty(gcx, tcx.env.clone(), t_e1);
+            let cid = gcx.arenas.core.lower_id(e.id);
+
+            guard_let_rec_arrow(
+                gcx,
+                tcx.clone(),
+                vt_e1,
+                e.span.with_hi(sp.hi()).into(),
+                gcx.arenas.core.ty(t_e1).span,
+                true,
+            )?;
+
+            let e1 = check(
+                gcx,
+                tcx.clone().bind_val(cid, vt_e1),
+                e1,
+                vt_e1,
+                TypeExpectation::Definition(gcx.arenas.core.ty(t_e1).span),
+            )?;
+            let (e2, vt_e2) = infer(gcx, tcx.clone().bind_val(cid, vt_e1), e2)?;
+
+            (
+                ast::Expr::new(
+                    gcx,
+                    cid,
+                    CE::Let(cid, i, Recursive::Recursive(sp), t_e1, e1, e2),
+                    e.span,
+                    Some(vt_e2),
+                ),
                 vt_e2,
             )
         }

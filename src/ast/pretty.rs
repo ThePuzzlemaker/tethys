@@ -3,7 +3,7 @@ use pretty::{DocAllocator, RcAllocator, RcDoc};
 
 use crate::ctxt::GlobalCtxt;
 
-use super::{BinOpKind, Expr, ExprKind, Item, ItemKind, Ty, TyKind};
+use super::{BinOpKind, Expr, ExprKind, Item, ItemKind, Recursive, Ty, TyKind};
 
 const PREC_TY_PRIMARY: usize = 3;
 const PREC_TY_ARROW: usize = 2;
@@ -292,7 +292,7 @@ pub fn pp_expr(prec: usize, gcx: &GlobalCtxt, expr: Id<Expr>) -> RcDoc<'_> {
                     .into_doc(),
             )
         }
-        ExprKind::Let(x, _, t, e1, e2) => {
+        ExprKind::Let(x, rec, t, e1, e2) => {
             let t = t.map(|t| pp_ty(PREC_TY_FORALL, gcx, t));
             let e1 = pp_expr(PREC_EXPR_LET, gcx, e1);
             let e2 = pp_expr(PREC_EXPR_LET, gcx, e2);
@@ -314,6 +314,11 @@ pub fn pp_expr(prec: usize, gcx: &GlobalCtxt, expr: Id<Expr>) -> RcDoc<'_> {
                 PREC_EXPR_LET,
                 RcAllocator
                     .text("let")
+                    .append(if rec != Recursive::NotRecursive {
+                        RcDoc::space().append("rec")
+                    } else {
+                        RcDoc::nil()
+                    })
                     .append(RcDoc::space())
                     .append(x.as_str())
                     .append(RcDoc::space())
